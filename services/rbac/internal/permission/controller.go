@@ -1,8 +1,6 @@
 package permission
 
 import (
-	"context"
-
 	"github.com/goback/pkg/dal"
 	"github.com/goback/pkg/errors"
 	"github.com/goback/pkg/response"
@@ -11,25 +9,11 @@ import (
 )
 
 // Controller 权限控制器
-type Controller struct {
-	repo         Repository
-	rolePermRepo RolePermissionRepository
-	collection   *dal.Collection[model.Permission]
-}
+type Controller struct{}
 
 // NewController 创建权限控制器
-func NewController(repo Repository, rolePermRepo RolePermissionRepository) *Controller {
-	return &Controller{
-		repo:         repo,
-		rolePermRepo: rolePermRepo,
-		collection: dal.NewCollection[model.Permission](repo.DB()).
-			WithDefaultSort("-id").
-			WithMaxPerPage(500).
-			WithFieldAlias(map[string]string{
-				"createdAt": "created_at",
-				"updatedAt": "updated_at",
-			}),
-	}
+func NewController() *Controller {
+	return &Controller{}
 }
 
 // RegisterRoutes 注册路由
@@ -48,19 +32,19 @@ func (c *Controller) create(ctx *fiber.Ctx) error {
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-	perm, err := c.doCreate(ctx.UserContext(), &req)
+	perm, err := c.doCreate(&req)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	return response.Success(ctx, perm)
 }
 
-func (c *Controller) doCreate(ctx context.Context, req *CreateRequest) (*model.Permission, error) {
-	existing, err := c.repo.FindByCode(ctx, req.Code)
+func (c *Controller) doCreate(req *CreateRequest) (*model.Permission, error) {
+	exists, err := model.Permissions.ExistsByCode(req.Code)
 	if err != nil {
 		return nil, err
 	}
-	if existing != nil {
+	if exists {
 		return nil, errors.Duplicate("权限编码")
 	}
 	perm := &model.Permission{
@@ -74,7 +58,7 @@ func (c *Controller) doCreate(ctx context.Context, req *CreateRequest) (*model.P
 	if perm.Type == 0 {
 		perm.Type = 1
 	}
-	if err := c.repo.Create(ctx, perm); err != nil {
+	if err := model.Permissions.Create(perm); err != nil {
 		return nil, err
 	}
 	return perm, nil
@@ -89,15 +73,15 @@ func (c *Controller) update(ctx *fiber.Ctx) error {
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-	perm, err := c.doUpdate(ctx.UserContext(), id, &req)
+	perm, err := c.doUpdate(id, &req)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	return response.Success(ctx, perm)
 }
 
-func (c *Controller) doUpdate(ctx context.Context, id int64, req *UpdateRequest) (*model.Permission, error) {
-	perm, err := c.repo.FindByID(ctx, id)
+func (c *Controller) doUpdate(id int64, req *UpdateRequest) (*model.Permission, error) {
+	perm, err := model.Permissions.GetOne(id)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +103,7 @@ func (c *Controller) doUpdate(ctx context.Context, id int64, req *UpdateRequest)
 	if req.Description != "" {
 		perm.Description = req.Description
 	}
-	if err := c.repo.Update(ctx, perm); err != nil {
+	if err := model.Permissions.Save(perm); err != nil {
 		return nil, err
 	}
 	return perm, nil
@@ -130,7 +114,7 @@ func (c *Controller) delete(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(ctx, "无效的权限ID")
 	}
-	if err := c.repo.Delete(ctx.UserContext(), id); err != nil {
+	if err := model.Permissions.DeleteByID(id); err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	return response.Success(ctx, nil)
@@ -141,7 +125,7 @@ func (c *Controller) get(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(ctx, "无效的权限ID")
 	}
-	perm, err := c.repo.FindByID(ctx.UserContext(), id)
+	perm, err := model.Permissions.GetOne(id)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
@@ -156,7 +140,7 @@ func (c *Controller) list(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-	result, err := c.collection.GetList(ctx.UserContext(), params)
+	result, err := model.Permissions.GetList(params)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
@@ -164,7 +148,9 @@ func (c *Controller) list(ctx *fiber.Ctx) error {
 }
 
 func (c *Controller) getAll(ctx *fiber.Ctx) error {
-	permissions, err := c.repo.FindAll(ctx.UserContext(), nil, dal.WithOrder("id ASC"))
+	permissions, err := model.Permissions.GetFullList(&dal.ListParams{
+		Sort: "id",
+	})
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
@@ -172,19 +158,29 @@ func (c *Controller) getAll(ctx *fiber.Ctx) error {
 }
 
 // GetByRoleID 根据角色ID获取权限列表
-func (c *Controller) GetByRoleID(ctx context.Context, roleID int64) ([]model.Permission, error) {
-	return c.repo.FindByRoleID(ctx, roleID)
+func (c *Controller) GetByRoleID(roleID int64) ([]model.Permission, error) {
+	return model.Permissions.GetByRoleID(roleID)
 }
 
 // SetRolePermissions 设置角色权限
-func (c *Controller) SetRolePermissions(ctx context.Context, roleID int64, permissionIDs []int64) error {
-	if err := c.rolePermRepo.DeleteByRoleID(ctx, roleID); err != nil {
+func (c *Controller) SetRolePermissions(roleID int64, permissionIDs []int64) error {
+	if err := model.RolePermissions.DeleteByRoleID(roleID); err != nil {
 		return err
 	}
-	return c.rolePermRepo.BatchCreate(ctx, roleID, permissionIDs)
+	if len(permissionIDs) == 0 {
+		return nil
+	}
+	rps := make([]model.RolePermission, len(permissionIDs))
+	for i, permID := range permissionIDs {
+		rps[i] = model.RolePermission{
+			RoleID:       roleID,
+			PermissionID: permID,
+		}
+	}
+	return model.RolePermissions.CreateBatch(rps)
 }
 
 // DeleteRolePermissions 删除角色权限
-func (c *Controller) DeleteRolePermissions(ctx context.Context, roleID int64) error {
-	return c.rolePermRepo.DeleteByRoleID(ctx, roleID)
+func (c *Controller) DeleteRolePermissions(roleID int64) error {
+	return model.RolePermissions.DeleteByRoleID(roleID)
 }

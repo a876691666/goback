@@ -1,8 +1,6 @@
 package dept
 
 import (
-	"context"
-
 	"github.com/goback/pkg/dal"
 	"github.com/goback/pkg/errors"
 	"github.com/goback/pkg/response"
@@ -11,24 +9,15 @@ import (
 )
 
 // Controller 部门控制器
-type Controller struct {
-	repo       Repository
-	collection *dal.Collection[model.Dept]
-}
+type Controller struct{}
 
-// NewController 创建部门控制器
-func NewController(repo Repository) *Controller {
-	return &Controller{
-		repo: repo,
-		collection: dal.NewCollection[model.Dept](repo.DB()).
-			WithDefaultSort("sort,id").
-			WithMaxPerPage(500).
-			WithFieldAlias(map[string]string{
-				"createdAt": "created_at",
-				"updatedAt": "updated_at",
-				"parentId":  "parent_id",
-			}),
-	}
+func NewController() *Controller { return &Controller{} }
+
+// FindAllEnabled 查找所有启用的部门
+func (c *Controller) FindAllEnabled() ([]model.Dept, error) {
+	return model.Depts.GetFullList(&dal.ListParams{
+		Filter: "status=1",
+	})
 }
 
 // RegisterRoutes 注册路由
@@ -47,14 +36,14 @@ func (c *Controller) create(ctx *fiber.Ctx) error {
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-	dept, err := c.doCreate(ctx.UserContext(), &req)
+	dept, err := c.doCreate(&req)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	return response.Success(ctx, dept)
 }
 
-func (c *Controller) doCreate(ctx context.Context, req *CreateRequest) (*model.Dept, error) {
+func (c *Controller) doCreate(req *CreateRequest) (*model.Dept, error) {
 	dept := &model.Dept{
 		ParentID: req.ParentID,
 		Name:     req.Name,
@@ -67,7 +56,7 @@ func (c *Controller) doCreate(ctx context.Context, req *CreateRequest) (*model.D
 	if dept.Status == 0 {
 		dept.Status = 1
 	}
-	if err := c.repo.Create(ctx, dept); err != nil {
+	if err := model.Depts.Create(dept); err != nil {
 		return nil, err
 	}
 	return dept, nil
@@ -82,15 +71,15 @@ func (c *Controller) update(ctx *fiber.Ctx) error {
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-	dept, err := c.doUpdate(ctx.UserContext(), id, &req)
+	dept, err := c.doUpdate(id, &req)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	return response.Success(ctx, dept)
 }
 
-func (c *Controller) doUpdate(ctx context.Context, id int64, req *UpdateRequest) (*model.Dept, error) {
-	dept, err := c.repo.FindByID(ctx, id)
+func (c *Controller) doUpdate(id int64, req *UpdateRequest) (*model.Dept, error) {
+	dept, err := model.Depts.GetOne(id)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +109,7 @@ func (c *Controller) doUpdate(ctx context.Context, id int64, req *UpdateRequest)
 		dept.Status = req.Status
 	}
 
-	if err := c.repo.Update(ctx, dept); err != nil {
+	if err := model.Depts.Save(dept); err != nil {
 		return nil, err
 	}
 	return dept, nil
@@ -131,7 +120,7 @@ func (c *Controller) delete(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(ctx, "无效的部门ID")
 	}
-	if err := c.repo.Delete(ctx.UserContext(), id); err != nil {
+	if err := model.Depts.DeleteByID(id); err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	return response.Success(ctx, nil)
@@ -142,7 +131,7 @@ func (c *Controller) get(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(ctx, "无效的部门ID")
 	}
-	dept, err := c.repo.FindByID(ctx.UserContext(), id)
+	dept, err := model.Depts.GetOne(id)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
@@ -157,7 +146,7 @@ func (c *Controller) list(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-	depts, err := c.collection.GetFullList(ctx.UserContext(), params)
+	depts, err := model.Depts.GetFullList(params)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
@@ -165,15 +154,15 @@ func (c *Controller) list(ctx *fiber.Ctx) error {
 }
 
 func (c *Controller) getTree(ctx *fiber.Ctx) error {
-	tree, err := c.doGetTree(ctx.UserContext())
+	tree, err := c.doGetTree()
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	return response.Success(ctx, tree)
 }
 
-func (c *Controller) doGetTree(ctx context.Context) ([]*model.Dept, error) {
-	depts, err := c.repo.FindAllEnabled(ctx)
+func (c *Controller) doGetTree() ([]*model.Dept, error) {
+	depts, err := c.FindAllEnabled()
 	if err != nil {
 		return nil, err
 	}
@@ -191,3 +180,4 @@ func buildTree(depts []model.Dept, parentID int64) []*model.Dept {
 	}
 	return tree
 }
+

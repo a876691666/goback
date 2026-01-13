@@ -1,35 +1,18 @@
 package menu
 
 import (
-	"context"
-
 	"github.com/goback/pkg/dal"
-	"github.com/goback/pkg/errors"
 	"github.com/goback/pkg/response"
 	"github.com/goback/services/menu/internal/model"
 	"github.com/gofiber/fiber/v2"
 )
 
 // Controller 菜单控制器
-type Controller struct {
-	repo       Repository
-	collection *dal.Collection[model.Menu]
-}
+type Controller struct{}
 
 // NewController 创建菜单控制器
-func NewController(repo Repository) *Controller {
-	return &Controller{
-		repo: repo,
-		collection: dal.NewCollection[model.Menu](repo.DB()).
-			WithDefaultSort("sort,id").
-			WithMaxPerPage(500).
-			WithFieldAlias(map[string]string{
-				"createdAt": "created_at",
-				"updatedAt": "updated_at",
-				"parentId":  "parent_id",
-				"permCode":  "perm_code",
-			}),
-	}
+func NewController() *Controller {
+	return &Controller{}
 }
 
 // RegisterRoutes 注册路由
@@ -49,14 +32,6 @@ func (c *Controller) create(ctx *fiber.Ctx) error {
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-	menu, err := c.doCreate(ctx.UserContext(), &req)
-	if err != nil {
-		return response.Error(ctx, 500, err.Error())
-	}
-	return response.Success(ctx, menu)
-}
-
-func (c *Controller) doCreate(ctx context.Context, req *CreateRequest) (*model.Menu, error) {
 	menu := &model.Menu{
 		ParentID:  req.ParentID,
 		Name:      req.Name,
@@ -79,10 +54,10 @@ func (c *Controller) doCreate(ctx context.Context, req *CreateRequest) (*model.M
 	if menu.Status == 0 {
 		menu.Status = 1
 	}
-	if err := c.repo.Create(ctx, menu); err != nil {
-		return nil, err
+	if err := model.Menus.Save(menu); err != nil {
+		return response.Error(ctx, 500, err.Error())
 	}
-	return menu, nil
+	return response.Success(ctx, menu)
 }
 
 func (c *Controller) update(ctx *fiber.Ctx) error {
@@ -94,20 +69,12 @@ func (c *Controller) update(ctx *fiber.Ctx) error {
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-	menu, err := c.doUpdate(ctx.UserContext(), id, &req)
+	menu, err := model.Menus.GetOne(id)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-	return response.Success(ctx, menu)
-}
-
-func (c *Controller) doUpdate(ctx context.Context, id int64, req *UpdateRequest) (*model.Menu, error) {
-	menu, err := c.repo.FindByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
 	if menu == nil {
-		return nil, errors.NotFound("菜单")
+		return response.NotFound(ctx, "菜单不存在")
 	}
 	if req.Name != "" {
 		menu.Name = req.Name
@@ -138,10 +105,10 @@ func (c *Controller) doUpdate(ctx context.Context, id int64, req *UpdateRequest)
 	if req.PermCode != "" {
 		menu.PermCode = req.PermCode
 	}
-	if err := c.repo.Update(ctx, menu); err != nil {
-		return nil, err
+	if err := model.Menus.Save(menu); err != nil {
+		return response.Error(ctx, 500, err.Error())
 	}
-	return menu, nil
+	return response.Success(ctx, menu)
 }
 
 func (c *Controller) delete(ctx *fiber.Ctx) error {
@@ -149,14 +116,17 @@ func (c *Controller) delete(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(ctx, "无效的菜单ID")
 	}
-	children, err := c.repo.FindByParentID(ctx.UserContext(), id)
+	children, err := model.Menus.GetFullList(&dal.ListParams{
+		Filter: "parent_id=" + ctx.Params("id"),
+	})
+
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	if len(children) > 0 {
 		return response.BadRequest(ctx, "存在子菜单，无法删除")
 	}
-	if err := c.repo.Delete(ctx.UserContext(), id); err != nil {
+	if err := model.Menus.DeleteByID(id); err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	return response.Success(ctx, nil)
@@ -167,7 +137,7 @@ func (c *Controller) get(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(ctx, "无效的菜单ID")
 	}
-	menu, err := c.repo.FindByID(ctx.UserContext(), id)
+	menu, err := model.Menus.GetOne(id)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
@@ -182,7 +152,7 @@ func (c *Controller) list(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-	menus, err := c.collection.GetFullList(ctx.UserContext(), params)
+	menus, err := model.Menus.GetFullList(params)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
@@ -190,19 +160,14 @@ func (c *Controller) list(ctx *fiber.Ctx) error {
 }
 
 func (c *Controller) getTree(ctx *fiber.Ctx) error {
-	tree, err := c.doGetTree(ctx.UserContext())
+	menus, err := model.Menus.GetFullList(&dal.ListParams{
+		Filter: "status=1",
+		Sort:   "sort,id",
+	})
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-	return response.Success(ctx, tree)
-}
-
-func (c *Controller) doGetTree(ctx context.Context) ([]*model.Menu, error) {
-	menus, err := c.repo.FindAll(ctx, map[string]interface{}{"status": 1}, dal.WithOrder("sort ASC, id ASC"))
-	if err != nil {
-		return nil, err
-	}
-	return buildMenuTree(menus, 0), nil
+	return response.Success(ctx, buildMenuTree(menus, 0))
 }
 
 func (c *Controller) getUserMenuTree(ctx *fiber.Ctx) error {
@@ -213,20 +178,15 @@ func (c *Controller) getUserMenuTree(ctx *fiber.Ctx) error {
 			codes = pc
 		}
 	}
-	tree, err := c.doGetUserMenuTree(ctx.UserContext(), codes)
+	menus, err := model.Menus.GetFullList(&dal.ListParams{
+		Filter: "status=1 && visible=1",
+		Sort:   "sort,id",
+	})
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-	return response.Success(ctx, tree)
-}
-
-func (c *Controller) doGetUserMenuTree(ctx context.Context, permCodes []string) ([]*model.Menu, error) {
-	menus, err := c.repo.FindAll(ctx, map[string]interface{}{"status": 1, "visible": 1}, dal.WithOrder("sort ASC, id ASC"))
-	if err != nil {
-		return nil, err
-	}
 	permCodeSet := make(map[string]struct{})
-	for _, code := range permCodes {
+	for _, code := range codes {
 		permCodeSet[code] = struct{}{}
 	}
 	var filteredMenus []model.Menu
@@ -239,7 +199,7 @@ func (c *Controller) doGetUserMenuTree(ctx context.Context, permCodes []string) 
 			filteredMenus = append(filteredMenus, menu)
 		}
 	}
-	return buildMenuTree(filteredMenus, 0), nil
+	return response.Success(ctx, buildMenuTree(filteredMenus, 0))
 }
 
 func buildMenuTree(menus []model.Menu, parentID int64) []*model.Menu {

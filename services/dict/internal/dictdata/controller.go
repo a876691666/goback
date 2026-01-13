@@ -1,23 +1,20 @@
 package dictdata
 
 import (
-	"context"
+	"fmt"
 
 	"github.com/goback/pkg/dal"
-	"github.com/goback/pkg/errors"
 	"github.com/goback/pkg/response"
 	"github.com/goback/services/dict/internal/model"
 	"github.com/gofiber/fiber/v2"
 )
 
 // Controller 字典数据控制器
-type Controller struct {
-	repo Repository
-}
+type Controller struct{}
 
 // NewController 创建字典数据控制器
-func NewController(repo Repository) *Controller {
-	return &Controller{repo: repo}
+func NewController() *Controller {
+	return &Controller{}
 }
 
 // RegisterRoutes 注册路由
@@ -36,14 +33,6 @@ func (c *Controller) create(ctx *fiber.Ctx) error {
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-	dictData, err := c.doCreate(ctx.UserContext(), &req)
-	if err != nil {
-		return response.Error(ctx, 500, err.Error())
-	}
-	return response.Success(ctx, dictData)
-}
-
-func (c *Controller) doCreate(ctx context.Context, req *CreateRequest) (*model.DictData, error) {
 	dictData := &model.DictData{
 		DictTypeID: req.TypeID,
 		Label:      req.Label,
@@ -57,10 +46,10 @@ func (c *Controller) doCreate(ctx context.Context, req *CreateRequest) (*model.D
 	if dictData.Status == 0 {
 		dictData.Status = 1
 	}
-	if err := c.repo.Create(ctx, dictData); err != nil {
-		return nil, err
+	if err := model.DictDatas.Create(dictData); err != nil {
+		return response.Error(ctx, 500, err.Error())
 	}
-	return dictData, nil
+	return response.Success(ctx, dictData)
 }
 
 func (c *Controller) update(ctx *fiber.Ctx) error {
@@ -72,43 +61,38 @@ func (c *Controller) update(ctx *fiber.Ctx) error {
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-	if err := c.doUpdate(ctx.UserContext(), id, &req); err != nil {
+	dictData, err := model.DictDatas.GetOne(id)
+	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-	return response.Success(ctx, nil)
-}
-
-func (c *Controller) doUpdate(ctx context.Context, id int64, req *UpdateRequest) error {
-	dictData, err := c.repo.FindByID(ctx, id)
-	if err != nil {
-		return err
-	}
 	if dictData == nil {
-		return errors.NotFound("字典数据")
+		return response.NotFound(ctx, "字典数据不存在")
 	}
-	updates := make(map[string]interface{})
 	if req.Label != "" {
-		updates["label"] = req.Label
+		dictData.Label = req.Label
 	}
 	if req.Value != "" {
-		updates["value"] = req.Value
+		dictData.Value = req.Value
 	}
 	if req.Sort != nil {
-		updates["sort"] = *req.Sort
+		dictData.Sort = *req.Sort
 	}
 	if req.Status != nil {
-		updates["status"] = *req.Status
+		dictData.Status = *req.Status
 	}
 	if req.CSSClass != "" {
-		updates["css_class"] = req.CSSClass
+		dictData.CSSClass = req.CSSClass
 	}
 	if req.ListClass != "" {
-		updates["list_class"] = req.ListClass
+		dictData.ListClass = req.ListClass
 	}
 	if req.Remark != "" {
-		updates["remark"] = req.Remark
+		dictData.Remark = req.Remark
 	}
-	return c.repo.UpdateFields(ctx, id, updates)
+	if err := model.DictDatas.Save(dictData); err != nil {
+		return response.Error(ctx, 500, err.Error())
+	}
+	return response.Success(ctx, dictData)
 }
 
 func (c *Controller) delete(ctx *fiber.Ctx) error {
@@ -116,7 +100,7 @@ func (c *Controller) delete(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(ctx, "无效的字典数据ID")
 	}
-	if err := c.repo.Delete(ctx.UserContext(), id); err != nil {
+	if err := model.DictDatas.DeleteByID(id); err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	return response.Success(ctx, nil)
@@ -127,7 +111,7 @@ func (c *Controller) get(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(ctx, "无效的字典数据ID")
 	}
-	dictData, err := c.repo.FindByID(ctx.UserContext(), id)
+	dictData, err := model.DictDatas.GetOne(id)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
@@ -142,7 +126,10 @@ func (c *Controller) listByType(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(ctx, "无效的类型ID")
 	}
-	list, err := c.repo.FindByTypeID(ctx.UserContext(), typeID)
+	list, err := model.DictDatas.GetFullList(&dal.ListParams{
+		Filter: fmt.Sprintf("dict_type_id=%d", typeID),
+		Sort:   "sort",
+	})
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
@@ -154,19 +141,14 @@ func (c *Controller) getByCode(ctx *fiber.Ctx) error {
 	if code == "" {
 		return response.BadRequest(ctx, "无效的字典编码")
 	}
-	list, err := c.repo.FindByTypeCode(ctx.UserContext(), code)
+	list, err := c.GetByTypeCode(code)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	return response.Success(ctx, list)
 }
 
-// DeleteByTypeID 根据类型ID删除字典数据
-func (c *Controller) DeleteByTypeID(ctx context.Context, typeID int64) error {
-	return c.repo.DeleteByTypeID(ctx, typeID)
-}
-
 // GetByTypeCode 根据类型编码获取字典数据
-func (c *Controller) GetByTypeCode(ctx context.Context, code string) ([]model.DictData, error) {
-	return c.repo.FindByTypeCode(ctx, code)
+func (c *Controller) GetByTypeCode(code string) ([]model.DictData, error) {
+	return model.DictDatas.GetByTypeCode(code)
 }

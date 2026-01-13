@@ -7,6 +7,7 @@ import (
 
 	"github.com/glebarez/sqlite"
 	"github.com/goback/pkg/config"
+	"github.com/goback/pkg/dal"
 	"github.com/goback/pkg/logger"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
@@ -24,6 +25,9 @@ func Init(cfg *config.DatabaseConfig) error {
 	var err error
 	once.Do(func() {
 		db, err = connect(cfg)
+		if err == nil {
+			dal.SetDB(db) // 设置全局 DB 供 Collection 使用
+		}
 	})
 	return err
 }

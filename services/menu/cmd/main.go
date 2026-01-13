@@ -45,9 +45,8 @@ func main() {
 		logger.Fatal("数据库迁移失败", zap.Error(err))
 	}
 
-	// 创建仓储和控制器
-	menuRepo := menu.NewRepository()
-	menuCtrl := menu.NewController(menuRepo)
+	// 创建控制器
+	menuCtrl := menu.NewController()
 
 	// JWT中间件
 	jwtManager := auth.NewJWTManager(&cfg.JWT)

@@ -46,13 +46,9 @@ func main() {
 		logger.Fatal("数据库迁移失败", zap.Error(err))
 	}
 
-	// 创建仓储
-	dictTypeRepo := dicttype.NewRepository()
-	dictDataRepo := dictdata.NewRepository()
-
 	// 创建控制器
-	dictTypeCtrl := dicttype.NewController(dictTypeRepo)
-	dictDataCtrl := dictdata.NewController(dictDataRepo)
+	dictTypeCtrl := dicttype.NewController()
+	dictDataCtrl := dictdata.NewController()
 
 	// JWT中间件
 	jwtManager := auth.NewJWTManager(&cfg.JWT)

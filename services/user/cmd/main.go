@@ -46,13 +46,9 @@ func main() {
 		logger.Fatal("数据库迁移失败", zap.Error(err))
 	}
 
-	// 创建仓储
-	userRepo := user.NewRepository()
-	deptRepo := dept.NewRepository()
-
 	// 创建控制器
-	userCtrl := user.NewController(userRepo, &cfg.JWT)
-	deptCtrl := dept.NewController(deptRepo)
+	userCtrl := user.NewController(&cfg.JWT)
+	deptCtrl := dept.NewController()
 	authCtrl := auth.NewController(userCtrl, &cfg.JWT)
 
 	// JWT中间件

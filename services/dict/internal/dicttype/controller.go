@@ -1,33 +1,18 @@
 package dicttype
 
 import (
-	"context"
-
 	"github.com/goback/pkg/dal"
-	"github.com/goback/pkg/errors"
 	"github.com/goback/pkg/response"
 	"github.com/goback/services/dict/internal/model"
 	"github.com/gofiber/fiber/v2"
 )
 
 // Controller 字典类型控制器
-type Controller struct {
-	repo       Repository
-	collection *dal.Collection[model.DictType]
-}
+type Controller struct{}
 
 // NewController 创建字典类型控制器
-func NewController(repo Repository) *Controller {
-	return &Controller{
-		repo: repo,
-		collection: dal.NewCollection[model.DictType](repo.DB()).
-			WithDefaultSort("-id").
-			WithMaxPerPage(100).
-			WithFieldAlias(map[string]string{
-				"createdAt": "created_at",
-				"updatedAt": "updated_at",
-			}),
-	}
+func NewController() *Controller {
+	return &Controller{}
 }
 
 // RegisterRoutes 注册路由
@@ -45,23 +30,12 @@ func (c *Controller) create(ctx *fiber.Ctx) error {
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-	dictType, err := c.doCreate(ctx.UserContext(), &req)
+	exists, err := model.DictTypes.ExistsByCode(req.Code)
 	if err != nil {
-		if err == errors.ErrRecordExists {
-			return response.Error(ctx, 400, "字典编码已存在")
-		}
 		return response.Error(ctx, 500, err.Error())
 	}
-	return response.Success(ctx, dictType)
-}
-
-func (c *Controller) doCreate(ctx context.Context, req *CreateRequest) (*model.DictType, error) {
-	exists, err := c.repo.ExistsByCode(ctx, req.Code)
-	if err != nil {
-		return nil, err
-	}
 	if exists {
-		return nil, errors.ErrRecordExists
+		return response.Error(ctx, 400, "字典编码已存在")
 	}
 	dictType := &model.DictType{
 		Name:        req.Name,
@@ -72,10 +46,10 @@ func (c *Controller) doCreate(ctx context.Context, req *CreateRequest) (*model.D
 	if dictType.Status == 0 {
 		dictType.Status = 1
 	}
-	if err := c.repo.Create(ctx, dictType); err != nil {
-		return nil, err
+	if err := model.DictTypes.Create(dictType); err != nil {
+		return response.Error(ctx, 500, err.Error())
 	}
-	return dictType, nil
+	return response.Success(ctx, dictType)
 }
 
 func (c *Controller) update(ctx *fiber.Ctx) error {
@@ -83,50 +57,43 @@ func (c *Controller) update(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(ctx, "无效的字典类型ID")
 	}
+
 	var req UpdateRequest
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-	if err := c.doUpdate(ctx.UserContext(), id, &req); err != nil {
-		if err == errors.ErrRecordExists {
-			return response.Error(ctx, 400, "字典编码已存在")
-		}
+	dictType, err := model.DictTypes.GetOne(id)
+	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-	return response.Success(ctx, nil)
-}
-
-func (c *Controller) doUpdate(ctx context.Context, id int64, req *UpdateRequest) error {
-	dictType, err := c.repo.FindByID(ctx, id)
-	if err != nil {
-		return err
-	}
 	if dictType == nil {
-		return errors.NotFound("字典类型")
+		return response.NotFound(ctx, "字典类型不存在")
 	}
+
 	if req.Code != "" && req.Code != dictType.Code {
-		exists, err := c.repo.ExistsByCode(ctx, req.Code, id)
+		exists, err := model.DictTypes.ExistsByCode(req.Code, id)
 		if err != nil {
-			return err
+			return response.Error(ctx, 500, err.Error())
 		}
 		if exists {
-			return errors.ErrRecordExists
+			return response.Error(ctx, 400, "字典编码已存在")
 		}
+		dictType.Code = req.Code
 	}
-	updates := make(map[string]interface{})
+
 	if req.Name != "" {
-		updates["name"] = req.Name
-	}
-	if req.Code != "" {
-		updates["code"] = req.Code
+		dictType.Name = req.Name
 	}
 	if req.Status != nil {
-		updates["status"] = *req.Status
+		dictType.Status = *req.Status
 	}
 	if req.Remark != "" {
-		updates["description"] = req.Remark
+		dictType.Description = req.Remark
 	}
-	return c.repo.UpdateFields(ctx, id, updates)
+	if err := model.DictTypes.Save(dictType); err != nil {
+		return response.Error(ctx, 500, err.Error())
+	}
+	return response.Success(ctx, dictType)
 }
 
 func (c *Controller) delete(ctx *fiber.Ctx) error {
@@ -134,7 +101,7 @@ func (c *Controller) delete(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(ctx, "无效的字典类型ID")
 	}
-	if err := c.repo.Delete(ctx.UserContext(), id); err != nil {
+	if err := model.DictTypes.DeleteByID(id); err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	return response.Success(ctx, nil)
@@ -145,7 +112,7 @@ func (c *Controller) get(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(ctx, "无效的字典类型ID")
 	}
-	dictType, err := c.repo.FindByID(ctx.UserContext(), id)
+	dictType, err := model.DictTypes.GetOne(id)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
@@ -160,7 +127,7 @@ func (c *Controller) list(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-	result, err := c.collection.GetList(ctx.UserContext(), params)
+	result, err := model.DictTypes.GetList(params)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
@@ -168,11 +135,11 @@ func (c *Controller) list(ctx *fiber.Ctx) error {
 }
 
 // GetByCode 根据编码获取字典类型
-func (c *Controller) GetByCode(ctx context.Context, code string) (*model.DictType, error) {
-	return c.repo.FindByCode(ctx, code)
+func (c *Controller) GetByCode(code string) (*model.DictType, error) {
+	return model.DictTypes.GetByCode(code)
 }
 
 // GetByID 根据ID获取字典类型
-func (c *Controller) GetByID(ctx context.Context, id int64) (*model.DictType, error) {
-	return c.repo.FindByID(ctx, id)
+func (c *Controller) GetByID(id int64) (*model.DictType, error) {
+	return model.DictTypes.GetOne(id)
 }

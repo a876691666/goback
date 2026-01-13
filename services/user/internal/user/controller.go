@@ -1,8 +1,6 @@
 package user
 
 import (
-	"context"
-
 	"github.com/goback/pkg/auth"
 	"github.com/goback/pkg/config"
 	"github.com/goback/pkg/dal"
@@ -14,25 +12,13 @@ import (
 
 // Controller 用户控制器
 type Controller struct {
-	repo       Repository
 	jwtManager *auth.JWTManager
-	collection *dal.Collection[model.User]
 }
 
 // NewController 创建用户控制器
-func NewController(repo Repository, jwtCfg *config.JWTConfig) *Controller {
+func NewController(jwtCfg *config.JWTConfig) *Controller {
 	return &Controller{
-		repo:       repo,
 		jwtManager: auth.NewJWTManager(jwtCfg),
-		collection: dal.NewCollection[model.User](repo.DB()).
-			WithDefaultSort("-id").
-			WithMaxPerPage(100).
-			WithFieldAlias(map[string]string{
-				"createdAt": "created_at",
-				"updatedAt": "updated_at",
-				"roleId":    "role_id",
-				"deptId":    "dept_id",
-			}),
 	}
 }
 
@@ -62,19 +48,19 @@ func (c *Controller) create(ctx *fiber.Ctx) error {
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-	user, err := c.doCreate(ctx.UserContext(), &req)
+	user, err := c.doCreate(&req)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	return response.Success(ctx, user)
 }
 
-func (c *Controller) doCreate(ctx context.Context, req *CreateRequest) (*model.User, error) {
-	existing, err := c.repo.FindByUsername(ctx, req.Username)
+func (c *Controller) doCreate(req *CreateRequest) (*model.User, error) {
+	exists, err := model.Users.ExistsByUsername(req.Username)
 	if err != nil {
 		return nil, err
 	}
-	if existing != nil {
+	if exists {
 		return nil, errors.Duplicate("用户名")
 	}
 
@@ -98,7 +84,7 @@ func (c *Controller) doCreate(ctx context.Context, req *CreateRequest) (*model.U
 		user.Status = 1
 	}
 
-	if err := c.repo.Create(ctx, user); err != nil {
+	if err := model.Users.Create(user); err != nil {
 		return nil, err
 	}
 	return user, nil
@@ -113,15 +99,15 @@ func (c *Controller) update(ctx *fiber.Ctx) error {
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-	user, err := c.doUpdate(ctx.UserContext(), id, &req)
+	user, err := c.doUpdate(id, &req)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	return response.Success(ctx, user)
 }
 
-func (c *Controller) doUpdate(ctx context.Context, id int64, req *UpdateRequest) (*model.User, error) {
-	user, err := c.repo.FindByID(ctx, id)
+func (c *Controller) doUpdate(id int64, req *UpdateRequest) (*model.User, error) {
+	user, err := model.Users.GetOne(id)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +137,7 @@ func (c *Controller) doUpdate(ctx context.Context, id int64, req *UpdateRequest)
 		user.Status = req.Status
 	}
 
-	if err := c.repo.Update(ctx, user); err != nil {
+	if err := model.Users.Save(user); err != nil {
 		return nil, err
 	}
 	return user, nil
@@ -162,7 +148,7 @@ func (c *Controller) delete(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(ctx, "无效的用户ID")
 	}
-	if err := c.repo.Delete(ctx.UserContext(), id); err != nil {
+	if err := model.Users.DeleteByID(id); err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	return response.Success(ctx, nil)
@@ -173,7 +159,7 @@ func (c *Controller) get(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(ctx, "无效的用户ID")
 	}
-	user, err := c.repo.FindByID(ctx.UserContext(), id, dal.WithPreload("Role"))
+	user, err := model.Users.GetByIDWithPreload(id, "Role")
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
@@ -191,7 +177,7 @@ func (c *Controller) list(ctx *fiber.Ctx) error {
 	if params.Expand == "" {
 		params.Expand = "Role"
 	}
-	result, err := c.collection.GetList(ctx.UserContext(), params)
+	result, err := model.Users.GetList(params)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
@@ -203,7 +189,7 @@ func (c *Controller) getProfile(ctx *fiber.Ctx) error {
 	if userID == 0 {
 		return response.Unauthorized(ctx, "")
 	}
-	user, err := c.repo.FindByID(ctx.UserContext(), userID, dal.WithPreload("Role"))
+	user, err := model.Users.GetByIDWithPreload(userID, "Role")
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
@@ -221,7 +207,7 @@ func (c *Controller) updateProfile(ctx *fiber.Ctx) error {
 	}
 	req.RoleID = 0
 	req.Status = 0
-	user, err := c.doUpdate(ctx.UserContext(), userID, &req)
+	user, err := c.doUpdate(userID, &req)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
@@ -237,14 +223,14 @@ func (c *Controller) changePassword(ctx *fiber.Ctx) error {
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-	if err := c.doChangePassword(ctx.UserContext(), userID, &req); err != nil {
+	if err := c.doChangePassword(userID, &req); err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	return response.Success(ctx, nil)
 }
 
-func (c *Controller) doChangePassword(ctx context.Context, userID int64, req *ChangePasswordRequest) error {
-	user, err := c.repo.FindByID(ctx, userID)
+func (c *Controller) doChangePassword(userID int64, req *ChangePasswordRequest) error {
+	user, err := model.Users.GetOne(userID)
 	if err != nil {
 		return err
 	}
@@ -258,7 +244,7 @@ func (c *Controller) doChangePassword(ctx context.Context, userID int64, req *Ch
 	if err != nil {
 		return errors.Wrap(err, 500, "密码加密失败")
 	}
-	return c.repo.UpdatePassword(ctx, userID, hashedPassword)
+	return model.Users.UpdateByID(userID, map[string]any{"password": hashedPassword})
 }
 
 func (c *Controller) resetPassword(ctx *fiber.Ctx) error {
@@ -270,20 +256,20 @@ func (c *Controller) resetPassword(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-	if err := c.repo.UpdatePassword(ctx.UserContext(), id, hashedPassword); err != nil {
+	if err := model.Users.UpdateByID(id, map[string]any{"password": hashedPassword}); err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	return response.Success(ctx, nil)
 }
 
 // GetByUsername 根据用户名获取用户
-func (c *Controller) GetByUsername(ctx context.Context, username string) (*model.User, error) {
-	return c.repo.FindByUsername(ctx, username)
+func (c *Controller) GetByUsername(username string) (*model.User, error) {
+	return model.Users.GetByUsername(username)
 }
 
 // GetByID 根据ID获取用户
-func (c *Controller) GetByID(ctx context.Context, id int64) (*model.User, error) {
-	return c.repo.FindByID(ctx, id, dal.WithPreload("Role"))
+func (c *Controller) GetByID(id int64) (*model.User, error) {
+	return model.Users.GetByIDWithPreload(id, "Role")
 }
 
 func getUserID(ctx *fiber.Ctx) int64 {

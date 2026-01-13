@@ -51,15 +51,9 @@ func main() {
 		logger.Fatal("数据库迁移失败", zap.Error(err))
 	}
 
-	// 创建仓储
-	roleRepo := role.NewRepository()
-	dataScopeRepo := role.NewDataScopeRepository()
-	permRepo := permission.NewRepository()
-	rolePermRepo := permission.NewRolePermissionRepository()
-
 	// 创建控制器
-	permCtrl := permission.NewController(permRepo, rolePermRepo)
-	roleCtrl := role.NewController(roleRepo, dataScopeRepo, permCtrl)
+	permCtrl := permission.NewController()
+	roleCtrl := role.NewController(permCtrl)
 
 	// JWT中间件
 	jwtManager := auth.NewJWTManager(&cfg.JWT)

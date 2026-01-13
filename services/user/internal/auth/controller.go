@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"context"
 	"fmt"
 
 	pkgAuth "github.com/goback/pkg/auth"
@@ -66,15 +65,15 @@ func (c *Controller) login(ctx *fiber.Ctx) error {
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-	result, err := c.doLogin(ctx.UserContext(), &req)
+	result, err := c.doLogin(&req)
 	if err != nil {
 		return response.Error(ctx, 401, err.Error())
 	}
 	return response.Success(ctx, result)
 }
 
-func (c *Controller) doLogin(ctx context.Context, req *LoginRequest) (*LoginResponse, error) {
-	user, err := c.userCtrl.GetByUsername(ctx, req.Username)
+func (c *Controller) doLogin(req *LoginRequest) (*LoginResponse, error) {
+	user, err := c.userCtrl.GetByUsername(req.Username)
 	if err != nil {
 		return nil, err
 	}
@@ -118,14 +117,14 @@ func (c *Controller) register(ctx *fiber.Ctx) error {
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-	u, err := c.doRegister(ctx.UserContext(), &req)
+	u, err := c.doRegister(&req)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	return response.Success(ctx, u)
 }
 
-func (c *Controller) doRegister(ctx context.Context, req *user.CreateRequest) (*model.User, error) {
+func (c *Controller) doRegister(req *user.CreateRequest) (*model.User, error) {
 	if req.Status == 0 {
 		req.Status = 1
 	}
