@@ -1,0 +1,43 @@
+app:
+  name: goback
+  env: prod
+  version: 1.0.0
+
+server:
+  http:
+    host: 0.0.0.0
+    port: 8080
+  grpc:
+    host: 0.0.0.0
+    port: 9090
+
+database:
+  driver: mysql
+  host: ${DB_HOST}
+  port: ${DB_PORT}
+  database: ${DB_NAME}
+  username: ${DB_USER}
+  password: ${DB_PASSWORD}
+  maxIdleConns: 20
+  maxOpenConns: 200
+
+redis:
+  host: ${REDIS_HOST}
+  port: ${REDIS_PORT}
+  password: ${REDIS_PASSWORD}
+  db: 0
+  poolSize: 200
+
+jwt:
+  secret: ${JWT_SECRET}
+  expire: 7200
+
+log:
+  level: info
+  format: json
+  output: file
+  filename: /var/log/goback/app.log
+  maxSize: 200
+  maxBackups: 60
+  maxAge: 30
+  compress: true

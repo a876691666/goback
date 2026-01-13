@@ -1,0 +1,210 @@
+version: '3.8'
+
+services:
+  # MySQL数据库
+  mysql:
+    image: mysql:8.0
+    container_name: goback-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: root123456
+      MYSQL_DATABASE: goback
+      MYSQL_USER: goback
+      MYSQL_PASSWORD: goback123456
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    networks:
+      - goback-network
+
+  # Redis缓存
+  redis:
+    image: redis:7-alpine
+    container_name: goback-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - goback-network
+
+  # Etcd服务注册
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: goback-etcd
+    restart: always
+    environment:
+      - ETCD_NAME=etcd0
+      - ETCD_DATA_DIR=/etcd-data
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd:2380
+      - ETCD_INITIAL_CLUSTER=etcd0=http://etcd:2380
+      - ETCD_INITIAL_CLUSTER_TOKEN=etcd-cluster
+      - ETCD_INITIAL_CLUSTER_STATE=new
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    volumes:
+      - etcd_data:/etcd-data
+    networks:
+      - goback-network
+
+  # API网关服务
+  gateway:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.gateway
+    container_name: goback-gateway
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      - APP_ENV=prod
+      - ETCD_ENDPOINTS=etcd:2379
+    depends_on:
+      - etcd
+    networks:
+      - goback-network
+
+  # 用户服务
+  user-service:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.user
+    container_name: goback-user
+    restart: always
+    ports:
+      - "8081:8081"
+    environment:
+      - APP_ENV=prod
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=goback
+      - DB_PASSWORD=goback123456
+      - DB_NAME=goback
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - ETCD_ENDPOINTS=etcd:2379
+    depends_on:
+      - mysql
+      - redis
+      - etcd
+    networks:
+      - goback-network
+
+  # RBAC服务
+  rbac-service:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.rbac
+    container_name: goback-rbac
+    restart: always
+    ports:
+      - "8082:8082"
+    environment:
+      - APP_ENV=prod
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=goback
+      - DB_PASSWORD=goback123456
+      - DB_NAME=goback
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - ETCD_ENDPOINTS=etcd:2379
+    depends_on:
+      - mysql
+      - redis
+      - etcd
+    networks:
+      - goback-network
+
+  # 菜单服务
+  menu-service:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.menu
+    container_name: goback-menu
+    restart: always
+    ports:
+      - "8083:8083"
+    environment:
+      - APP_ENV=prod
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=goback
+      - DB_PASSWORD=goback123456
+      - DB_NAME=goback
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - ETCD_ENDPOINTS=etcd:2379
+    depends_on:
+      - mysql
+      - redis
+      - etcd
+    networks:
+      - goback-network
+
+  # 日志服务
+  log-service:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.log
+    container_name: goback-log
+    restart: always
+    ports:
+      - "8084:8084"
+    environment:
+      - APP_ENV=prod
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=goback
+      - DB_PASSWORD=goback123456
+      - DB_NAME=goback
+      - ETCD_ENDPOINTS=etcd:2379
+    depends_on:
+      - mysql
+      - etcd
+    networks:
+      - goback-network
+
+  # 字典服务
+  dict-service:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.dict
+    container_name: goback-dict
+    restart: always
+    ports:
+      - "8085:8085"
+    environment:
+      - APP_ENV=prod
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=goback
+      - DB_PASSWORD=goback123456
+      - DB_NAME=goback
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - ETCD_ENDPOINTS=etcd:2379
+    depends_on:
+      - mysql
+      - redis
+      - etcd
+    networks:
+      - goback-network
+
+networks:
+  goback-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  redis_data:
+  etcd_data:

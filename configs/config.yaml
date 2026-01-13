@@ -1,0 +1,47 @@
+app:
+  name: goback
+  env: dev
+  version: 1.0.0
+
+server:
+  http:
+    host: 0.0.0.0
+    port: 8080
+    readTimeout: 60
+    writeTimeout: 60
+  grpc:
+    host: 0.0.0.0
+    port: 9090
+
+database:
+  driver: sqlite
+  database: data/goback.db  # SQLite 数据库文件路径，设为 ":memory:" 使用内存数据库
+  maxIdleConns: 10
+  maxOpenConns: 100
+  logLevel: info
+
+redis:
+  mode: memory  # "memory" 内存模式(无需外部Redis), "standalone" 需要外部Redis服务
+  host: localhost
+  port: 6379
+  password: ""
+  db: 0
+  poolSize: 100
+
+jwt:
+  secret: goback-secret-key-change-in-production
+  issuer: goback
+  expire: 7200
+
+casbin:
+  modelPath: configs/rbac_model.conf
+
+log:
+  level: debug
+  format: json
+  output: both
+  filename: logs/app.log
+  maxSize: 100
+  maxBackups: 30
+  maxAge: 7
+  compress: true
