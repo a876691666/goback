@@ -1,5 +1,7 @@
 package dicttype
 
+import "github.com/goback/pkg/dal"
+
 // CreateRequest 创建字典类型请求
 type CreateRequest struct {
 	Name   string `json:"name" binding:"required"`
@@ -16,11 +18,5 @@ type UpdateRequest struct {
 	Remark string `json:"remark"`
 }
 
-// ListRequest 字典类型列表请求
-type ListRequest struct {
-	Page     int    `form:"page"`
-	PageSize int    `form:"pageSize"`
-	Name     string `form:"name"`
-	Code     string `form:"code"`
-	Status   *int8  `form:"status"`
-}
+// ListRequest 字典类型列表请求（使用 PocketBase 风格参数）
+type ListRequest = dal.ListParams

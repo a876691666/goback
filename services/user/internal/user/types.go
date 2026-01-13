@@ -1,5 +1,7 @@
 package user
 
+import "github.com/goback/pkg/dal"
+
 // CreateRequest 创建用户请求
 type CreateRequest struct {
 	Username string `json:"username" binding:"required,min=3,max=50"`
@@ -24,18 +26,8 @@ type UpdateRequest struct {
 	Status   int8   `json:"status"`
 }
 
-// ListRequest 用户列表请求
-type ListRequest struct {
-	Page     int    `form:"page"`
-	PageSize int    `form:"pageSize"`
-	Username string `form:"username"`
-	Nickname string `form:"nickname"`
-	Phone    string `form:"phone"`
-	Status   *int8  `form:"status"`
-	RoleID   *int64 `form:"roleId"`
-	DeptID   *int64 `form:"deptId"`
-	SSql     string `form:"ssql"`
-}
+// ListRequest 用户列表请求（使用 PocketBase 风格参数）
+type ListRequest = dal.ListParams
 
 // ChangePasswordRequest 修改密码请求
 type ChangePasswordRequest struct {

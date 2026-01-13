@@ -14,8 +14,10 @@ type Repository[T any] interface {
 	CreateBatch(ctx context.Context, entities []T) error
 	Update(ctx context.Context, entity *T) error
 	UpdateFields(ctx context.Context, id int64, fields map[string]interface{}) error
+	UpdateWhere(ctx context.Context, conditions map[string]interface{}, fields map[string]interface{}) (int64, error)
 	Delete(ctx context.Context, id int64) error
 	DeleteBatch(ctx context.Context, ids []int64) error
+	DeleteWhere(ctx context.Context, conditions map[string]interface{}) error
 	FindByID(ctx context.Context, id int64, opts ...QueryOption) (*T, error)
 	FindOne(ctx context.Context, conditions map[string]interface{}, opts ...QueryOption) (*T, error)
 	FindAll(ctx context.Context, conditions map[string]interface{}, opts ...QueryOption) ([]T, error)
@@ -23,6 +25,9 @@ type Repository[T any] interface {
 	Count(ctx context.Context, conditions map[string]interface{}) (int64, error)
 	Exists(ctx context.Context, conditions map[string]interface{}) (bool, error)
 	Transaction(ctx context.Context, fn func(tx *gorm.DB) error) error
+	Truncate(ctx context.Context) error
+	TruncateHard(ctx context.Context) error
+	GetTableName() string
 	DB() *gorm.DB
 }
 
@@ -227,4 +232,66 @@ func (r *BaseRepository[T]) Raw(ctx context.Context, sql string, values ...inter
 // Exec 执行原生SQL
 func (r *BaseRepository[T]) Exec(ctx context.Context, sql string, values ...interface{}) error {
 	return r.db.WithContext(ctx).Exec(sql, values...).Error
+}
+
+// Truncate 清空表数据（软删除方式）
+func (r *BaseRepository[T]) Truncate(ctx context.Context) error {
+	var entity T
+	return r.db.WithContext(ctx).Where("1 = 1").Delete(&entity).Error
+}
+
+// TruncateHard 硬清空表数据（谨慎使用，数据无法恢复）
+func (r *BaseRepository[T]) TruncateHard(ctx context.Context) error {
+	var entity T
+	stmt := &gorm.Statement{DB: r.db}
+	if err := stmt.Parse(&entity); err != nil {
+		return err
+	}
+	tableName := stmt.Schema.Table
+	return r.db.WithContext(ctx).Exec("TRUNCATE TABLE " + tableName).Error
+}
+
+// DeleteWhere 根据条件删除（软删除）
+func (r *BaseRepository[T]) DeleteWhere(ctx context.Context, conditions map[string]interface{}) error {
+	var entity T
+	return r.db.WithContext(ctx).Where(conditions).Delete(&entity).Error
+}
+
+// DeleteWhereHard 根据条件硬删除
+func (r *BaseRepository[T]) DeleteWhereHard(ctx context.Context, conditions map[string]interface{}) error {
+	var entity T
+	return r.db.WithContext(ctx).Unscoped().Where(conditions).Delete(&entity).Error
+}
+
+// HardDeleteBatch 批量硬删除
+func (r *BaseRepository[T]) HardDeleteBatch(ctx context.Context, ids []int64) error {
+	var entity T
+	return r.db.WithContext(ctx).Unscoped().Where("id IN ?", ids).Delete(&entity).Error
+}
+
+// UpdateWhere 根据条件批量更新
+func (r *BaseRepository[T]) UpdateWhere(ctx context.Context, conditions map[string]interface{}, fields map[string]interface{}) (int64, error) {
+	var entity T
+	result := r.db.WithContext(ctx).Model(&entity).Where(conditions).Updates(fields)
+	return result.RowsAffected, result.Error
+}
+
+// CountWhere 根据条件统计数量
+func (r *BaseRepository[T]) CountWhere(ctx context.Context, query string, args ...interface{}) (int64, error) {
+	var count int64
+	var entity T
+	if err := r.db.WithContext(ctx).Model(&entity).Where(query, args...).Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// GetTableName 获取表名
+func (r *BaseRepository[T]) GetTableName() string {
+	var entity T
+	stmt := &gorm.Statement{DB: r.db}
+	if err := stmt.Parse(&entity); err != nil {
+		return ""
+	}
+	return stmt.Schema.Table
 }

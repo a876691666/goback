@@ -1,5 +1,7 @@
 package dept
 
+import "github.com/goback/pkg/dal"
+
 // CreateRequest 创建部门请求
 type CreateRequest struct {
 	ParentID int64  `json:"parentId"`
@@ -22,8 +24,5 @@ type UpdateRequest struct {
 	Status   int8   `json:"status"`
 }
 
-// ListRequest 部门列表请求
-type ListRequest struct {
-	Name   string `form:"name"`
-	Status *int8  `form:"status"`
-}
+// ListRequest 部门列表请求（使用 PocketBase 风格参数）
+type ListRequest = dal.ListParams

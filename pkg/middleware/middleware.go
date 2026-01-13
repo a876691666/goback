@@ -67,9 +67,10 @@ func Permission(casbinSvc *auth.CasbinService) fiber.Handler {
 	}
 }
 
-// OperationLog 操作日志记录中间件
+// OperationLogFunc 操作日志记录回调函数类型
 type OperationLogFunc func(userID int64, username, module, action, method, path, ip, userAgent, reqBody string, status int, respBody string, latency time.Duration)
 
+// OperationLog 操作日志记录中间件
 func OperationLog(logFunc OperationLogFunc, moduleName string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		// 记录开始时间

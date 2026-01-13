@@ -7,18 +7,19 @@ import (
 
 // 预定义错误
 var (
-	ErrNotFound          = New(404, "resource not found")
-	ErrUnauthorized      = New(401, "unauthorized")
-	ErrForbidden         = New(403, "forbidden")
-	ErrBadRequest        = New(400, "bad request")
-	ErrInternalServer    = New(500, "internal server error")
-	ErrValidation        = New(422, "validation error")
-	ErrDuplicateEntry    = New(409, "duplicate entry")
-	ErrInvalidCredential = New(401, "invalid credentials")
-	ErrTokenExpired      = New(401, "token expired")
-	ErrTokenInvalid      = New(401, "token invalid")
-	ErrRecordNotFound    = New(404, "record not found")
-	ErrRecordExists      = New(409, "record already exists")
+	ErrNotFound          = New(404, "资源不存在")
+	ErrUnauthorized      = New(401, "未授权")
+	ErrForbidden         = New(403, "禁止访问")
+	ErrBadRequest        = New(400, "请求错误")
+	ErrInternalServer    = New(500, "服务器内部错误")
+	ErrValidation        = New(422, "验证错误")
+	ErrDuplicateEntry    = New(409, "数据已存在")
+	ErrInvalidCredential = New(401, "用户名或密码错误")
+	ErrTokenExpired      = New(401, "令牌已过期")
+	ErrTokenInvalid      = New(401, "令牌无效")
+	ErrRecordNotFound    = New(404, "记录不存在")
+	ErrRecordExists      = New(409, "记录已存在")
+	ErrNotImplemented    = New(501, "功能未实现")
 )
 
 // AppError 应用错误
@@ -104,7 +105,7 @@ func GetMessage(err error) string {
 func NotFound(resource string) *AppError {
 	return &AppError{
 		Code:    404,
-		Message: fmt.Sprintf("%s not found", resource),
+		Message: fmt.Sprintf("%s不存在", resource),
 	}
 }
 
@@ -119,7 +120,7 @@ func BadRequest(message string) *AppError {
 // Unauthorized 创建未授权错误
 func Unauthorized(message string) *AppError {
 	if message == "" {
-		message = "unauthorized"
+		message = "未授权"
 	}
 	return &AppError{
 		Code:    401,
@@ -130,7 +131,7 @@ func Unauthorized(message string) *AppError {
 // Forbidden 创建禁止访问错误
 func Forbidden(message string) *AppError {
 	if message == "" {
-		message = "forbidden"
+		message = "禁止访问"
 	}
 	return &AppError{
 		Code:    403,
@@ -149,7 +150,7 @@ func Validation(message string) *AppError {
 // Internal 创建内部错误
 func Internal(message string) *AppError {
 	if message == "" {
-		message = "internal server error"
+		message = "服务器内部错误"
 	}
 	return &AppError{
 		Code:    500,
@@ -161,6 +162,6 @@ func Internal(message string) *AppError {
 func Duplicate(field string) *AppError {
 	return &AppError{
 		Code:    409,
-		Message: fmt.Sprintf("%s already exists", field),
+		Message: fmt.Sprintf("%s已存在", field),
 	}
 }

@@ -28,10 +28,10 @@ func NewRepository() Repository {
 
 // FindByParentID 根据父ID查找
 func (r *repository) FindByParentID(ctx context.Context, parentID int64) ([]model.Dept, error) {
-	return r.Find(ctx, map[string]interface{}{"parent_id": parentID})
+	return r.FindAll(ctx, map[string]interface{}{"parent_id": parentID})
 }
 
 // FindAllEnabled 查找所有启用的部门
 func (r *repository) FindAllEnabled(ctx context.Context) ([]model.Dept, error) {
-	return r.Find(ctx, map[string]interface{}{"status": 1})
+	return r.FindAll(ctx, map[string]interface{}{"status": 1})
 }

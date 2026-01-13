@@ -1,5 +1,7 @@
 package menu
 
+import "github.com/goback/pkg/dal"
+
 // CreateRequest 创建菜单请求
 type CreateRequest struct {
 	ParentID  int64  `json:"parentId"`
@@ -30,9 +32,5 @@ type UpdateRequest struct {
 	PermCode  string `json:"permCode"`
 }
 
-// ListRequest 菜单列表请求
-type ListRequest struct {
-	Name     string `form:"name"`
-	Status   *int8  `form:"status"`
-	ParentID *int64 `form:"parentId"`
-}
+// ListRequest 菜单列表请求（使用 PocketBase 风格参数）
+type ListRequest = dal.ListParams

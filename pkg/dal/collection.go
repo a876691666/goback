@@ -373,3 +373,58 @@ func (c *Collection[T]) Count(ctx context.Context, filter string) (int64, error)
 
 	return count, nil
 }
+
+// Truncate 清空表数据（谨慎使用）
+// 使用 DELETE 语句而非 TRUNCATE，以便触发软删除钩子
+// 如需真正的 TRUNCATE，请使用 TruncateHard
+func (c *Collection[T]) Truncate(ctx context.Context) error {
+	var entity T
+	return c.db.WithContext(ctx).Where("1 = 1").Delete(&entity).Error
+}
+
+// TruncateHard 硬清空表数据（不触发软删除，谨慎使用）
+// 这将执行真正的 TRUNCATE 操作，数据无法恢复
+func (c *Collection[T]) TruncateHard(ctx context.Context) error {
+	var entity T
+	stmt := &gorm.Statement{DB: c.db}
+	if err := stmt.Parse(&entity); err != nil {
+		return err
+	}
+	tableName := stmt.Schema.Table
+	return c.db.WithContext(ctx).Exec("TRUNCATE TABLE " + tableName).Error
+}
+
+// DeleteWhere 根据条件删除（软删除）
+func (c *Collection[T]) DeleteWhere(ctx context.Context, filter string) error {
+	var entity T
+	db := c.db.WithContext(ctx)
+	db = c.applyFilter(db, filter)
+	return db.Delete(&entity).Error
+}
+
+// DeleteWhereHard 根据条件硬删除（不触发软删除）
+func (c *Collection[T]) DeleteWhereHard(ctx context.Context, filter string) error {
+	var entity T
+	db := c.db.WithContext(ctx).Unscoped()
+	db = c.applyFilter(db, filter)
+	return db.Delete(&entity).Error
+}
+
+// UpdateWhere 根据条件批量更新
+func (c *Collection[T]) UpdateWhere(ctx context.Context, filter string, fields map[string]interface{}) (int64, error) {
+	var entity T
+	db := c.db.WithContext(ctx).Model(&entity)
+	db = c.applyFilter(db, filter)
+	result := db.Updates(fields)
+	return result.RowsAffected, result.Error
+}
+
+// GetTableName 获取表名
+func (c *Collection[T]) GetTableName() string {
+	var entity T
+	stmt := &gorm.Statement{DB: c.db}
+	if err := stmt.Parse(&entity); err != nil {
+		return ""
+	}
+	return stmt.Schema.Table
+}

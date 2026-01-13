@@ -9,6 +9,7 @@ import (
 // DataScopeType 数据权限类型
 type DataScopeType int
 
+// 数据权限类型常量
 const (
 	DataScopeAll      DataScopeType = 1 // 全部数据
 	DataScopeDept     DataScopeType = 2 // 本部门数据

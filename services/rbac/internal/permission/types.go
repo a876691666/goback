@@ -1,5 +1,7 @@
 package permission
 
+import "github.com/goback/pkg/dal"
+
 // CreateRequest 创建权限请求
 type CreateRequest struct {
 	Name        string `json:"name" binding:"required"`
@@ -19,11 +21,5 @@ type UpdateRequest struct {
 	Description string `json:"description"`
 }
 
-// ListRequest 权限列表请求
-type ListRequest struct {
-	Page     int    `form:"page"`
-	PageSize int    `form:"pageSize"`
-	Name     string `form:"name"`
-	Code     string `form:"code"`
-	Type     *int8  `form:"type"`
-}
+// ListRequest 权限列表请求（使用 PocketBase 风格参数）
+type ListRequest = dal.ListParams

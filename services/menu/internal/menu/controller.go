@@ -2,7 +2,6 @@ package menu
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/goback/pkg/dal"
 	"github.com/goback/pkg/errors"
@@ -13,50 +12,51 @@ import (
 
 // Controller 菜单控制器
 type Controller struct {
-	repo Repository
+	repo       Repository
+	collection *dal.Collection[model.Menu]
 }
 
 // NewController 创建菜单控制器
 func NewController(repo Repository) *Controller {
-	return &Controller{repo: repo}
+	return &Controller{
+		repo: repo,
+		collection: dal.NewCollection[model.Menu](repo.DB()).
+			WithDefaultSort("sort,id").
+			WithMaxPerPage(500).
+			WithFieldAlias(map[string]string{
+				"createdAt": "created_at",
+				"updatedAt": "updated_at",
+				"parentId":  "parent_id",
+				"permCode":  "perm_code",
+			}),
+	}
 }
 
 // RegisterRoutes 注册路由
 func (c *Controller) RegisterRoutes(r fiber.Router, jwtMiddleware fiber.Handler) {
-	menus := r.Group("/menus", jwtMiddleware)
-	menus.Post("", c.Create)
-	menus.Put("/:id", c.Update)
-	menus.Delete("/:id", c.Delete)
-	menus.Get("/:id", c.Get)
-	menus.Get("", c.List)
-	menus.Get("/tree", c.GetTree)
-	menus.Get("/user/tree", c.GetUserMenuTree)
+	g := r.Group("/menus", jwtMiddleware)
+	g.Post("", c.create)
+	g.Put("/:id", c.update)
+	g.Delete("/:id", c.delete)
+	g.Get("/:id", c.get)
+	g.Get("", c.list)
+	g.Get("/tree", c.getTree)
+	g.Get("/user/tree", c.getUserMenuTree)
 }
 
-// Create 创建菜单
-// @Summary 创建菜单
-// @Tags 菜单管理
-// @Accept json
-// @Produce json
-// @Param request body CreateRequest true "创建菜单请求"
-// @Success 200 {object} response.Response
-// @Router /menus [post]
-func (c *Controller) Create(ctx *fiber.Ctx) error {
+func (c *Controller) create(ctx *fiber.Ctx) error {
 	var req CreateRequest
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-
-	menu, err := c.create(ctx.UserContext(), &req)
+	menu, err := c.doCreate(ctx.UserContext(), &req)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	return response.Success(ctx, menu)
 }
 
-// create 创建菜单业务逻辑
-func (c *Controller) create(ctx context.Context, req *CreateRequest) (*model.Menu, error) {
+func (c *Controller) doCreate(ctx context.Context, req *CreateRequest) (*model.Menu, error) {
 	menu := &model.Menu{
 		ParentID:  req.ParentID,
 		Name:      req.Name,
@@ -70,7 +70,6 @@ func (c *Controller) create(ctx context.Context, req *CreateRequest) (*model.Men
 		Sort:      req.Sort,
 		PermCode:  req.PermCode,
 	}
-
 	if menu.Type == 0 {
 		menu.Type = 1
 	}
@@ -80,52 +79,36 @@ func (c *Controller) create(ctx context.Context, req *CreateRequest) (*model.Men
 	if menu.Status == 0 {
 		menu.Status = 1
 	}
-
 	if err := c.repo.Create(ctx, menu); err != nil {
 		return nil, err
 	}
-
 	return menu, nil
 }
 
-// Update 更新菜单
-// @Summary 更新菜单
-// @Tags 菜单管理
-// @Accept json
-// @Produce json
-// @Param id path int true "菜单ID"
-// @Param request body UpdateRequest true "更新菜单请求"
-// @Success 200 {object} response.Response
-// @Router /menus/{id} [put]
-func (c *Controller) Update(ctx *fiber.Ctx) error {
-	id, _ := strconv.ParseInt(ctx.Params("id"), 10, 64)
-	if id == 0 {
-		return response.BadRequest(ctx, "invalid menu id")
+func (c *Controller) update(ctx *fiber.Ctx) error {
+	id, err := dal.ParseInt64ID(ctx.Params("id"))
+	if err != nil {
+		return response.BadRequest(ctx, "无效的菜单ID")
 	}
-
 	var req UpdateRequest
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-
-	menu, err := c.update(ctx.UserContext(), id, &req)
+	menu, err := c.doUpdate(ctx.UserContext(), id, &req)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	return response.Success(ctx, menu)
 }
 
-// update 更新菜单业务逻辑
-func (c *Controller) update(ctx context.Context, id int64, req *UpdateRequest) (*model.Menu, error) {
+func (c *Controller) doUpdate(ctx context.Context, id int64, req *UpdateRequest) (*model.Menu, error) {
 	menu, err := c.repo.FindByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if menu == nil {
-		return nil, errors.NotFound("menu")
+		return nil, errors.NotFound("菜单")
 	}
-
 	if req.Name != "" {
 		menu.Name = req.Name
 	}
@@ -155,137 +138,74 @@ func (c *Controller) update(ctx context.Context, id int64, req *UpdateRequest) (
 	if req.PermCode != "" {
 		menu.PermCode = req.PermCode
 	}
-
 	if err := c.repo.Update(ctx, menu); err != nil {
 		return nil, err
 	}
-
 	return menu, nil
 }
 
-// Delete 删除菜单
-// @Summary 删除菜单
-// @Tags 菜单管理
-// @Param id path int true "菜单ID"
-// @Success 200 {object} response.Response
-// @Router /menus/{id} [delete]
-func (c *Controller) Delete(ctx *fiber.Ctx) error {
-	id, _ := strconv.ParseInt(ctx.Params("id"), 10, 64)
-	if id == 0 {
-		return response.BadRequest(ctx, "invalid menu id")
+func (c *Controller) delete(ctx *fiber.Ctx) error {
+	id, err := dal.ParseInt64ID(ctx.Params("id"))
+	if err != nil {
+		return response.BadRequest(ctx, "无效的菜单ID")
 	}
-
-	// 检查是否有子菜单
 	children, err := c.repo.FindByParentID(ctx.UserContext(), id)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	if len(children) > 0 {
-		return response.BadRequest(ctx, "cannot delete menu with children")
+		return response.BadRequest(ctx, "存在子菜单，无法删除")
 	}
-
 	if err := c.repo.Delete(ctx.UserContext(), id); err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	return response.Success(ctx, nil)
 }
 
-// Get 获取菜单
-// @Summary 获取菜单详情
-// @Tags 菜单管理
-// @Param id path int true "菜单ID"
-// @Success 200 {object} response.Response
-// @Router /menus/{id} [get]
-func (c *Controller) Get(ctx *fiber.Ctx) error {
-	id, _ := strconv.ParseInt(ctx.Params("id"), 10, 64)
-	if id == 0 {
-		return response.BadRequest(ctx, "invalid menu id")
+func (c *Controller) get(ctx *fiber.Ctx) error {
+	id, err := dal.ParseInt64ID(ctx.Params("id"))
+	if err != nil {
+		return response.BadRequest(ctx, "无效的菜单ID")
 	}
-
 	menu, err := c.repo.FindByID(ctx.UserContext(), id)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	if menu == nil {
-		return response.NotFound(ctx, "menu not found")
+		return response.NotFound(ctx, "菜单不存在")
 	}
-
 	return response.Success(ctx, menu)
 }
 
-// List 菜单列表
-// @Summary 菜单列表
-// @Tags 菜单管理
-// @Param name query string false "名称"
-// @Param status query int false "状态"
-// @Param parentId query int false "父ID"
-// @Success 200 {object} response.Response
-// @Router /menus [get]
-func (c *Controller) List(ctx *fiber.Ctx) error {
-	var req ListRequest
-	if err := ctx.QueryParser(&req); err != nil {
+func (c *Controller) list(ctx *fiber.Ctx) error {
+	params, err := dal.BindQuery(ctx)
+	if err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-
-	menus, err := c.list(ctx.UserContext(), &req)
+	menus, err := c.collection.GetFullList(ctx.UserContext(), params)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	return response.Success(ctx, menus)
 }
 
-// list 菜单列表业务逻辑
-func (c *Controller) list(ctx context.Context, req *ListRequest) ([]model.Menu, error) {
-	qb := dal.NewQueryBuilder[model.Menu](c.repo.DB())
-
-	if req.Name != "" {
-		qb.Where("name LIKE ?", "%"+req.Name+"%")
-	}
-	if req.Status != nil {
-		qb.Where("status = ?", *req.Status)
-	}
-	if req.ParentID != nil {
-		qb.Where("parent_id = ?", *req.ParentID)
-	}
-
-	qb.Order("sort ASC, id ASC")
-
-	return qb.Find(ctx)
-}
-
-// GetTree 获取菜单树
-// @Summary 获取菜单树
-// @Tags 菜单管理
-// @Success 200 {object} response.Response
-// @Router /menus/tree [get]
-func (c *Controller) GetTree(ctx *fiber.Ctx) error {
-	tree, err := c.getTree(ctx.UserContext())
+func (c *Controller) getTree(ctx *fiber.Ctx) error {
+	tree, err := c.doGetTree(ctx.UserContext())
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	return response.Success(ctx, tree)
 }
 
-// getTree 获取菜单树业务逻辑
-func (c *Controller) getTree(ctx context.Context) ([]*model.Menu, error) {
+func (c *Controller) doGetTree(ctx context.Context) ([]*model.Menu, error) {
 	menus, err := c.repo.FindAll(ctx, map[string]interface{}{"status": 1}, dal.WithOrder("sort ASC, id ASC"))
 	if err != nil {
 		return nil, err
 	}
-
 	return buildMenuTree(menus, 0), nil
 }
 
-// GetUserMenuTree 获取用户菜单树
-// @Summary 获取用户菜单树
-// @Tags 菜单管理
-// @Success 200 {object} response.Response
-// @Router /menus/user/tree [get]
-func (c *Controller) GetUserMenuTree(ctx *fiber.Ctx) error {
-	// 从JWT中获取权限编码（实际应该从context中获取）
+func (c *Controller) getUserMenuTree(ctx *fiber.Ctx) error {
 	permCodes := ctx.Locals("permCodes")
 	var codes []string
 	if permCodes != nil {
@@ -293,51 +213,37 @@ func (c *Controller) GetUserMenuTree(ctx *fiber.Ctx) error {
 			codes = pc
 		}
 	}
-
-	tree, err := c.getUserMenuTree(ctx.UserContext(), codes)
+	tree, err := c.doGetUserMenuTree(ctx.UserContext(), codes)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	return response.Success(ctx, tree)
 }
 
-// getUserMenuTree 获取用户菜单树业务逻辑
-func (c *Controller) getUserMenuTree(ctx context.Context, permCodes []string) ([]*model.Menu, error) {
-	menus, err := c.repo.FindAll(ctx, map[string]interface{}{
-		"status":  1,
-		"visible": 1,
-	}, dal.WithOrder("sort ASC, id ASC"))
+func (c *Controller) doGetUserMenuTree(ctx context.Context, permCodes []string) ([]*model.Menu, error) {
+	menus, err := c.repo.FindAll(ctx, map[string]interface{}{"status": 1, "visible": 1}, dal.WithOrder("sort ASC, id ASC"))
 	if err != nil {
 		return nil, err
 	}
-
-	// 过滤有权限的菜单
 	permCodeSet := make(map[string]struct{})
 	for _, code := range permCodes {
 		permCodeSet[code] = struct{}{}
 	}
-
 	var filteredMenus []model.Menu
 	for _, menu := range menus {
-		// 目录类型或无权限编码的菜单默认显示
 		if menu.Type == 1 || menu.PermCode == "" {
 			filteredMenus = append(filteredMenus, menu)
 			continue
 		}
-		// 检查权限
 		if _, ok := permCodeSet[menu.PermCode]; ok {
 			filteredMenus = append(filteredMenus, menu)
 		}
 	}
-
 	return buildMenuTree(filteredMenus, 0), nil
 }
 
-// buildMenuTree 构建菜单树
 func buildMenuTree(menus []model.Menu, parentID int64) []*model.Menu {
 	var tree []*model.Menu
-
 	for i := range menus {
 		if menus[i].ParentID == parentID {
 			menu := &menus[i]
@@ -345,6 +251,5 @@ func buildMenuTree(menus []model.Menu, parentID int64) []*model.Menu {
 			tree = append(tree, menu)
 		}
 	}
-
 	return tree
 }

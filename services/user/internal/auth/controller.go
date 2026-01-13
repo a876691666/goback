@@ -29,11 +29,11 @@ func NewController(userCtrl *user.Controller, jwtCfg *config.JWTConfig) *Control
 
 // RegisterRoutes 注册路由
 func (c *Controller) RegisterRoutes(r fiber.Router, jwtMiddleware fiber.Handler) {
-	auth := r.Group("/auth")
-	auth.Post("/login", c.Login)
-	auth.Post("/register", c.Register)
-	auth.Post("/logout", jwtMiddleware, c.Logout)
-	auth.Post("/refresh", c.RefreshToken)
+	g := r.Group("/auth")
+	g.Post("/login", c.login)
+	g.Post("/register", c.register)
+	g.Post("/logout", jwtMiddleware, c.logout)
+	g.Post("/refresh", c.refreshToken)
 }
 
 // LoginRequest 登录请求
@@ -61,30 +61,19 @@ type UserInfo struct {
 	DeptID   int64  `json:"deptId"`
 }
 
-// Login 用户登录
-// @Summary 用户登录
-// @Tags 认证
-// @Accept json
-// @Produce json
-// @Param request body LoginRequest true "登录请求"
-// @Success 200 {object} response.Response
-// @Router /auth/login [post]
-func (c *Controller) Login(ctx *fiber.Ctx) error {
+func (c *Controller) login(ctx *fiber.Ctx) error {
 	var req LoginRequest
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-
-	result, err := c.login(ctx.UserContext(), &req)
+	result, err := c.doLogin(ctx.UserContext(), &req)
 	if err != nil {
 		return response.Error(ctx, 401, err.Error())
 	}
-
 	return response.Success(ctx, result)
 }
 
-// login 登录业务逻辑
-func (c *Controller) login(ctx context.Context, req *LoginRequest) (*LoginResponse, error) {
+func (c *Controller) doLogin(ctx context.Context, req *LoginRequest) (*LoginResponse, error) {
 	user, err := c.userCtrl.GetByUsername(ctx, req.Username)
 	if err != nil {
 		return nil, err
@@ -92,29 +81,22 @@ func (c *Controller) login(ctx context.Context, req *LoginRequest) (*LoginRespon
 	if user == nil {
 		return nil, errors.ErrInvalidCredential
 	}
-
 	if !pkgAuth.CheckPassword(req.Password, user.Password) {
 		return nil, errors.ErrInvalidCredential
 	}
-
 	if user.Status != 1 {
-		return nil, errors.Forbidden("user is disabled")
+		return nil, errors.Forbidden("用户已被禁用")
 	}
-
-	// 获取角色信息
 	var roleCode string
 	if user.Role != nil {
 		roleCode = user.Role.Code
 	} else {
 		roleCode = fmt.Sprintf("role_%d", user.RoleID)
 	}
-
-	// 生成Token
 	token, err := c.jwtManager.CreateTokenInfo(user.ID, user.Username, user.RoleID, roleCode)
 	if err != nil {
-		return nil, errors.Wrap(err, 500, "failed to generate token")
+		return nil, errors.Wrap(err, 500, "生成令牌失败")
 	}
-
 	return &LoginResponse{
 		Token: token,
 		UserInfo: &UserInfo{
@@ -131,73 +113,41 @@ func (c *Controller) login(ctx context.Context, req *LoginRequest) (*LoginRespon
 	}, nil
 }
 
-// Register 用户注册
-// @Summary 用户注册
-// @Tags 认证
-// @Accept json
-// @Produce json
-// @Param request body user.CreateRequest true "注册请求"
-// @Success 200 {object} response.Response
-// @Router /auth/register [post]
-func (c *Controller) Register(ctx *fiber.Ctx) error {
+func (c *Controller) register(ctx *fiber.Ctx) error {
 	var req user.CreateRequest
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-
-	u, err := c.register(ctx.UserContext(), &req)
+	u, err := c.doRegister(ctx.UserContext(), &req)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	return response.Success(ctx, u)
 }
 
-// register 注册业务逻辑（复用用户创建逻辑）
-func (c *Controller) register(ctx context.Context, req *user.CreateRequest) (*model.User, error) {
-	// 注册时设置默认角色和状态
+func (c *Controller) doRegister(ctx context.Context, req *user.CreateRequest) (*model.User, error) {
 	if req.Status == 0 {
 		req.Status = 1
 	}
-	// 可以在这里设置默认角色ID
-	// req.RoleID = defaultRoleID
-
-	// 使用userCtrl内部的Create方法会更好，但这里直接调用HTTP handler不合适
-	// 所以我们需要在user.Controller中暴露一个Create方法供内部调用
 	return nil, errors.ErrNotImplemented
 }
 
-// Logout 用户登出
-// @Summary 用户登出
-// @Tags 认证
-// @Success 200 {object} response.Response
-// @Router /auth/logout [post]
-func (c *Controller) Logout(ctx *fiber.Ctx) error {
-	// TODO: 实现Token黑名单机制
+func (c *Controller) logout(ctx *fiber.Ctx) error {
 	return response.Success(ctx, nil)
 }
 
-// RefreshToken 刷新Token
-// @Summary 刷新Token
-// @Tags 认证
-// @Success 200 {object} response.Response
-// @Router /auth/refresh [post]
-func (c *Controller) RefreshToken(ctx *fiber.Ctx) error {
+func (c *Controller) refreshToken(ctx *fiber.Ctx) error {
 	token := ctx.Get("Authorization")
 	if token == "" {
-		return response.Unauthorized(ctx, "token required")
+		return response.Unauthorized(ctx, "需要令牌")
 	}
-
-	// 去掉Bearer前缀
 	if len(token) > 7 && token[:7] == "Bearer " {
 		token = token[7:]
 	}
-
 	newToken, err := c.jwtManager.RefreshToken(token)
 	if err != nil {
 		return response.Unauthorized(ctx, err.Error())
 	}
-
 	return response.Success(ctx, &pkgAuth.TokenInfo{
 		AccessToken: newToken,
 		TokenType:   "Bearer",

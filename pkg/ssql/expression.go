@@ -8,6 +8,7 @@ import (
 // Operator 比较操作符
 type Operator string
 
+// 比较操作符常量
 const (
 	OpEq       Operator = "="
 	OpNeq      Operator = "!="
@@ -27,6 +28,7 @@ const (
 // LogicOperator 逻辑操作符
 type LogicOperator string
 
+// 逻辑操作符常量
 const (
 	LogicAnd LogicOperator = "&&"
 	LogicOr  LogicOperator = "||"

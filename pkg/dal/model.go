@@ -143,6 +143,7 @@ func WithUnscoped() QueryOption {
 // SortOrder 排序方向
 type SortOrder string
 
+// 排序方向常量
 const (
 	SortAsc  SortOrder = "ASC"
 	SortDesc SortOrder = "DESC"

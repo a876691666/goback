@@ -2,7 +2,6 @@ package user
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/goback/pkg/auth"
 	"github.com/goback/pkg/config"
@@ -13,10 +12,11 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// Controller 用户控制器（融合了Service层）
+// Controller 用户控制器
 type Controller struct {
 	repo       Repository
 	jwtManager *auth.JWTManager
+	collection *dal.Collection[model.User]
 }
 
 // NewController 创建用户控制器
@@ -24,7 +24,16 @@ func NewController(repo Repository, jwtCfg *config.JWTConfig) *Controller {
 	return &Controller{
 		repo:       repo,
 		jwtManager: auth.NewJWTManager(jwtCfg),
-	}
+		collection: dal.NewCollection[model.User](repo.DB()).
+			WithDefaultSort("-id").
+			WithMaxPerPage(100).
+			WithFieldAlias(map[string]string{
+				"createdAt": "created_at",
+				"updatedAt": "updated_at",
+				"roleId":    "role_id",
+				"deptId":    "dept_id",
+			}),
+	})
 }
 
 // GetJWTManager 获取JWT管理器
@@ -34,59 +43,44 @@ func (c *Controller) GetJWTManager() *auth.JWTManager {
 
 // RegisterRoutes 注册路由
 func (c *Controller) RegisterRoutes(r fiber.Router, jwtMiddleware fiber.Handler) {
-	// 需要认证的接口
 	users := r.Group("/users", jwtMiddleware)
-	users.Post("", c.Create)
-	users.Put("/:id", c.Update)
-	users.Delete("/:id", c.Delete)
-	users.Get("/:id", c.Get)
-	users.Get("", c.List)
-	users.Put("/:id/password/reset", c.ResetPassword)
+	users.Post("", c.create)
+	users.Put("/:id", c.update)
+	users.Delete("/:id", c.delete)
+	users.Get("/:id", c.get)
+	users.Get("", c.list)
+	users.Put("/:id/password/reset", c.resetPassword)
 
-	// 个人中心
 	profile := r.Group("/profile", jwtMiddleware)
-	profile.Get("", c.GetProfile)
-	profile.Put("", c.UpdateProfile)
-	profile.Put("/password", c.ChangePassword)
+	profile.Get("", c.getProfile)
+	profile.Put("", c.updateProfile)
+	profile.Put("/password", c.changePassword)
 }
 
-// Create 创建用户
-// @Summary 创建用户
-// @Tags 用户管理
-// @Accept json
-// @Produce json
-// @Param request body CreateRequest true "创建用户请求"
-// @Success 200 {object} response.Response
-// @Router /users [post]
-func (c *Controller) Create(ctx *fiber.Ctx) error {
+func (c *Controller) create(ctx *fiber.Ctx) error {
 	var req CreateRequest
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-
-	user, err := c.create(ctx.UserContext(), &req)
+	user, err := c.doCreate(ctx.UserContext(), &req)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	return response.Success(ctx, user)
 }
 
-// create 创建用户业务逻辑
-func (c *Controller) create(ctx context.Context, req *CreateRequest) (*model.User, error) {
-	// 检查用户名是否存在
+func (c *Controller) doCreate(ctx context.Context, req *CreateRequest) (*model.User, error) {
 	existing, err := c.repo.FindByUsername(ctx, req.Username)
 	if err != nil {
 		return nil, err
 	}
 	if existing != nil {
-		return nil, errors.Duplicate("username")
+		return nil, errors.Duplicate("用户名")
 	}
 
-	// 加密密码
 	hashedPassword, err := auth.HashPassword(req.Password)
 	if err != nil {
-		return nil, errors.Wrap(err, 500, "failed to hash password")
+		return nil, errors.Wrap(err, 500, "密码加密失败")
 	}
 
 	user := &model.User{
@@ -100,7 +94,6 @@ func (c *Controller) create(ctx context.Context, req *CreateRequest) (*model.Use
 		DeptID:   req.DeptID,
 		Status:   req.Status,
 	}
-
 	if user.Status == 0 {
 		user.Status = 1
 	}
@@ -108,46 +101,32 @@ func (c *Controller) create(ctx context.Context, req *CreateRequest) (*model.Use
 	if err := c.repo.Create(ctx, user); err != nil {
 		return nil, err
 	}
-
 	return user, nil
 }
 
-// Update 更新用户
-// @Summary 更新用户
-// @Tags 用户管理
-// @Accept json
-// @Produce json
-// @Param id path int true "用户ID"
-// @Param request body UpdateRequest true "更新用户请求"
-// @Success 200 {object} response.Response
-// @Router /users/{id} [put]
-func (c *Controller) Update(ctx *fiber.Ctx) error {
-	id := parseInt64(ctx.Params("id"))
-	if id == 0 {
-		return response.BadRequest(ctx, "invalid user id")
+func (c *Controller) update(ctx *fiber.Ctx) error {
+	id, err := dal.ParseInt64ID(ctx.Params("id"))
+	if err != nil {
+		return response.BadRequest(ctx, "无效的用户ID")
 	}
-
 	var req UpdateRequest
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-
-	user, err := c.update(ctx.UserContext(), id, &req)
+	user, err := c.doUpdate(ctx.UserContext(), id, &req)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	return response.Success(ctx, user)
 }
 
-// update 更新用户业务逻辑
-func (c *Controller) update(ctx context.Context, id int64, req *UpdateRequest) (*model.User, error) {
+func (c *Controller) doUpdate(ctx context.Context, id int64, req *UpdateRequest) (*model.User, error) {
 	user, err := c.repo.FindByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if user == nil {
-		return nil, errors.NotFound("user")
+		return nil, errors.NotFound("用户")
 	}
 
 	if req.Nickname != "" {
@@ -175,253 +154,136 @@ func (c *Controller) update(ctx context.Context, id int64, req *UpdateRequest) (
 	if err := c.repo.Update(ctx, user); err != nil {
 		return nil, err
 	}
-
 	return user, nil
 }
 
-// Delete 删除用户
-// @Summary 删除用户
-// @Tags 用户管理
-// @Param id path int true "用户ID"
-// @Success 200 {object} response.Response
-// @Router /users/{id} [delete]
-func (c *Controller) Delete(ctx *fiber.Ctx) error {
-	id := parseInt64(ctx.Params("id"))
-	if id == 0 {
-		return response.BadRequest(ctx, "invalid user id")
+func (c *Controller) delete(ctx *fiber.Ctx) error {
+	id, err := dal.ParseInt64ID(ctx.Params("id"))
+	if err != nil {
+		return response.BadRequest(ctx, "无效的用户ID")
 	}
-
 	if err := c.repo.Delete(ctx.UserContext(), id); err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	return response.Success(ctx, nil)
 }
 
-// Get 获取用户
-// @Summary 获取用户详情
-// @Tags 用户管理
-// @Param id path int true "用户ID"
-// @Success 200 {object} response.Response
-// @Router /users/{id} [get]
-func (c *Controller) Get(ctx *fiber.Ctx) error {
-	id := parseInt64(ctx.Params("id"))
-	if id == 0 {
-		return response.BadRequest(ctx, "invalid user id")
+func (c *Controller) get(ctx *fiber.Ctx) error {
+	id, err := dal.ParseInt64ID(ctx.Params("id"))
+	if err != nil {
+		return response.BadRequest(ctx, "无效的用户ID")
 	}
-
 	user, err := c.repo.FindByID(ctx.UserContext(), id, dal.WithPreload("Role"))
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	if user == nil {
-		return response.NotFound(ctx, "user not found")
+		return response.NotFound(ctx, "用户不存在")
 	}
-
 	return response.Success(ctx, user)
 }
 
-// List 用户列表
-// @Summary 用户列表
-// @Tags 用户管理
-// @Param page query int false "页码"
-// @Param pageSize query int false "每页数量"
-// @Param username query string false "用户名"
-// @Param nickname query string false "昵称"
-// @Param status query int false "状态"
-// @Success 200 {object} response.Response
-// @Router /users [get]
-func (c *Controller) List(ctx *fiber.Ctx) error {
-	var req ListRequest
-	if err := ctx.QueryParser(&req); err != nil {
+func (c *Controller) list(ctx *fiber.Ctx) error {
+	params, err := dal.BindQuery(ctx)
+	if err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-
-	result, err := c.list(ctx.UserContext(), &req)
+	if params.Expand == "" {
+		params.Expand = "Role"
+	}
+	result, err := c.collection.GetList(ctx.UserContext(), params)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
-	return response.SuccessPage(ctx, result.List, result.Total, result.Page, result.PageSize)
+	return response.SuccessPage(ctx, result.Items, result.TotalItems, result.Page, result.PerPage)
 }
 
-// list 用户列表业务逻辑
-func (c *Controller) list(ctx context.Context, req *ListRequest) (*dal.PagedResult[model.User], error) {
-	pagination := dal.NewPagination(req.Page, req.PageSize)
-
-	qb := dal.NewQueryBuilder[model.User](c.repo.DB())
-
-	if req.Username != "" {
-		qb.Where("username LIKE ?", "%"+req.Username+"%")
-	}
-	if req.Nickname != "" {
-		qb.Where("nickname LIKE ?", "%"+req.Nickname+"%")
-	}
-	if req.Phone != "" {
-		qb.Where("phone LIKE ?", "%"+req.Phone+"%")
-	}
-	if req.Status != nil {
-		qb.Where("status = ?", *req.Status)
-	}
-	if req.RoleID != nil {
-		qb.Where("role_id = ?", *req.RoleID)
-	}
-	if req.DeptID != nil {
-		qb.Where("dept_id = ?", *req.DeptID)
-	}
-
-	if req.SSql != "" {
-		qb.WhereSSql(req.SSql)
-	}
-
-	qb.Order("id DESC")
-	qb.Preload("Role")
-
-	return qb.Paged(ctx, pagination)
-}
-
-// GetProfile 获取个人信息
-// @Summary 获取个人信息
-// @Tags 个人中心
-// @Success 200 {object} response.Response
-// @Router /profile [get]
-func (c *Controller) GetProfile(ctx *fiber.Ctx) error {
+func (c *Controller) getProfile(ctx *fiber.Ctx) error {
 	userID := getUserID(ctx)
 	if userID == 0 {
 		return response.Unauthorized(ctx, "")
 	}
-
 	user, err := c.repo.FindByID(ctx.UserContext(), userID, dal.WithPreload("Role"))
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	return response.Success(ctx, user)
 }
 
-// UpdateProfile 更新个人信息
-// @Summary 更新个人信息
-// @Tags 个人中心
-// @Accept json
-// @Produce json
-// @Param request body UpdateRequest true "更新信息请求"
-// @Success 200 {object} response.Response
-// @Router /profile [put]
-func (c *Controller) UpdateProfile(ctx *fiber.Ctx) error {
+func (c *Controller) updateProfile(ctx *fiber.Ctx) error {
 	userID := getUserID(ctx)
 	if userID == 0 {
 		return response.Unauthorized(ctx, "")
 	}
-
 	var req UpdateRequest
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-
-	// 不允许修改角色和状态
 	req.RoleID = 0
 	req.Status = 0
-
-	user, err := c.update(ctx.UserContext(), userID, &req)
+	user, err := c.doUpdate(ctx.UserContext(), userID, &req)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	return response.Success(ctx, user)
 }
 
-// ChangePassword 修改密码
-// @Summary 修改密码
-// @Tags 个人中心
-// @Accept json
-// @Produce json
-// @Param request body ChangePasswordRequest true "修改密码请求"
-// @Success 200 {object} response.Response
-// @Router /profile/password [put]
-func (c *Controller) ChangePassword(ctx *fiber.Ctx) error {
+func (c *Controller) changePassword(ctx *fiber.Ctx) error {
 	userID := getUserID(ctx)
 	if userID == 0 {
 		return response.Unauthorized(ctx, "")
 	}
-
 	var req ChangePasswordRequest
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-
-	if err := c.changePassword(ctx.UserContext(), userID, &req); err != nil {
+	if err := c.doChangePassword(ctx.UserContext(), userID, &req); err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	return response.Success(ctx, nil)
 }
 
-// changePassword 修改密码业务逻辑
-func (c *Controller) changePassword(ctx context.Context, userID int64, req *ChangePasswordRequest) error {
+func (c *Controller) doChangePassword(ctx context.Context, userID int64, req *ChangePasswordRequest) error {
 	user, err := c.repo.FindByID(ctx, userID)
 	if err != nil {
 		return err
 	}
 	if user == nil {
-		return errors.NotFound("user")
+		return errors.NotFound("用户")
 	}
-
 	if !auth.CheckPassword(req.OldPassword, user.Password) {
-		return errors.BadRequest("old password is incorrect")
+		return errors.BadRequest("旧密码错误")
 	}
-
 	hashedPassword, err := auth.HashPassword(req.NewPassword)
 	if err != nil {
-		return errors.Wrap(err, 500, "failed to hash password")
+		return errors.Wrap(err, 500, "密码加密失败")
 	}
-
 	return c.repo.UpdatePassword(ctx, userID, hashedPassword)
 }
 
-// ResetPassword 重置密码
-// @Summary 重置用户密码
-// @Tags 用户管理
-// @Param id path int true "用户ID"
-// @Success 200 {object} response.Response
-// @Router /users/{id}/password/reset [put]
-func (c *Controller) ResetPassword(ctx *fiber.Ctx) error {
-	id := parseInt64(ctx.Params("id"))
-	if id == 0 {
-		return response.BadRequest(ctx, "invalid user id")
+func (c *Controller) resetPassword(ctx *fiber.Ctx) error {
+	id, err := dal.ParseInt64ID(ctx.Params("id"))
+	if err != nil {
+		return response.BadRequest(ctx, "无效的用户ID")
 	}
-
-	// 默认重置密码为123456
 	hashedPassword, err := auth.HashPassword("123456")
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	if err := c.repo.UpdatePassword(ctx.UserContext(), id, hashedPassword); err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	return response.Success(ctx, nil)
 }
 
-// GetByUsername 根据用户名获取用户（供内部调用）
+// GetByUsername 根据用户名获取用户
 func (c *Controller) GetByUsername(ctx context.Context, username string) (*model.User, error) {
 	return c.repo.FindByUsername(ctx, username)
 }
 
-// GetByID 根据ID获取用户（供内部调用）
+// GetByID 根据ID获取用户
 func (c *Controller) GetByID(ctx context.Context, id int64) (*model.User, error) {
 	return c.repo.FindByID(ctx, id, dal.WithPreload("Role"))
-}
-
-// 辅助函数
-func parseInt64(s string) int64 {
-	var id int64
-	for _, ch := range s {
-		if ch >= '0' && ch <= '9' {
-			id = id*10 + int64(ch-'0')
-		}
-	}
-	return id
 }
 
 func getUserID(ctx *fiber.Ctx) int64 {
@@ -434,6 +296,3 @@ func getUserID(ctx *fiber.Ctx) int64 {
 	}
 	return 0
 }
-
-// Ensure Controller doesn't have unused variable
-var _ = fmt.Sprintf

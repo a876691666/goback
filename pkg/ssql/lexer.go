@@ -9,6 +9,7 @@ import (
 // TokenType 词法单元类型
 type TokenType int
 
+// 词法单元类型常量
 const (
 	TokenField      TokenType = iota // 字段名
 	TokenOperator                    // 操作符

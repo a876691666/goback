@@ -8,6 +8,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// JWT 相关错误
 var (
 	ErrTokenExpired     = errors.New("token has expired")
 	ErrTokenNotValidYet = errors.New("token not valid yet")

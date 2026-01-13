@@ -2,8 +2,8 @@ package dictdata
 
 import (
 	"context"
-	"strconv"
 
+	"github.com/goback/pkg/dal"
 	"github.com/goback/pkg/errors"
 	"github.com/goback/pkg/response"
 	"github.com/goback/services/dict/internal/model"
@@ -22,41 +22,28 @@ func NewController(repo Repository) *Controller {
 
 // RegisterRoutes 注册路由
 func (c *Controller) RegisterRoutes(r fiber.Router, jwtMiddleware fiber.Handler) {
-	dictData := r.Group("/dict-data", jwtMiddleware)
-	dictData.Post("", c.Create)
-	dictData.Put("/:id", c.Update)
-	dictData.Delete("/:id", c.Delete)
-	dictData.Get("/:id", c.Get)
-	dictData.Get("/type/:typeId", c.ListByType)
-
-	// 公开接口（根据编码获取字典）
-	r.Get("/dicts/:code", c.GetByCode)
+	g := r.Group("/dict-data", jwtMiddleware)
+	g.Post("", c.create)
+	g.Put("/:id", c.update)
+	g.Delete("/:id", c.delete)
+	g.Get("/:id", c.get)
+	g.Get("/type/:typeId", c.listByType)
+	r.Get("/dicts/:code", c.getByCode)
 }
 
-// Create 创建字典数据
-// @Summary 创建字典数据
-// @Tags 字典数据
-// @Accept json
-// @Produce json
-// @Param request body CreateRequest true "创建字典数据请求"
-// @Success 200 {object} response.Response
-// @Router /dict-data [post]
-func (c *Controller) Create(ctx *fiber.Ctx) error {
+func (c *Controller) create(ctx *fiber.Ctx) error {
 	var req CreateRequest
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-
-	dictData, err := c.create(ctx.UserContext(), &req)
+	dictData, err := c.doCreate(ctx.UserContext(), &req)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	return response.Success(ctx, dictData)
 }
 
-// create 创建字典数据业务逻辑
-func (c *Controller) create(ctx context.Context, req *CreateRequest) (*model.DictData, error) {
+func (c *Controller) doCreate(ctx context.Context, req *CreateRequest) (*model.DictData, error) {
 	dictData := &model.DictData{
 		DictTypeID: req.TypeID,
 		Label:      req.Label,
@@ -67,55 +54,38 @@ func (c *Controller) create(ctx context.Context, req *CreateRequest) (*model.Dic
 		ListClass:  req.ListClass,
 		Remark:     req.Remark,
 	}
-
 	if dictData.Status == 0 {
 		dictData.Status = 1
 	}
-
 	if err := c.repo.Create(ctx, dictData); err != nil {
 		return nil, err
 	}
-
 	return dictData, nil
 }
 
-// Update 更新字典数据
-// @Summary 更新字典数据
-// @Tags 字典数据
-// @Accept json
-// @Produce json
-// @Param id path int true "字典数据ID"
-// @Param request body UpdateRequest true "更新字典数据请求"
-// @Success 200 {object} response.Response
-// @Router /dict-data/{id} [put]
-func (c *Controller) Update(ctx *fiber.Ctx) error {
-	id, _ := strconv.ParseInt(ctx.Params("id"), 10, 64)
-	if id == 0 {
-		return response.BadRequest(ctx, "invalid dict data id")
+func (c *Controller) update(ctx *fiber.Ctx) error {
+	id, err := dal.ParseInt64ID(ctx.Params("id"))
+	if err != nil {
+		return response.BadRequest(ctx, "无效的字典数据ID")
 	}
-
 	var req UpdateRequest
 	if err := ctx.BodyParser(&req); err != nil {
 		return response.ValidateError(ctx, err.Error())
 	}
-
-	if err := c.update(ctx.UserContext(), id, &req); err != nil {
+	if err := c.doUpdate(ctx.UserContext(), id, &req); err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	return response.Success(ctx, nil)
 }
 
-// update 更新字典数据业务逻辑
-func (c *Controller) update(ctx context.Context, id int64, req *UpdateRequest) error {
+func (c *Controller) doUpdate(ctx context.Context, id int64, req *UpdateRequest) error {
 	dictData, err := c.repo.FindByID(ctx, id)
 	if err != nil {
 		return err
 	}
 	if dictData == nil {
-		return errors.NotFound("dict data")
+		return errors.NotFound("字典数据")
 	}
-
 	updates := make(map[string]interface{})
 	if req.Label != "" {
 		updates["label"] = req.Label
@@ -138,98 +108,65 @@ func (c *Controller) update(ctx context.Context, id int64, req *UpdateRequest) e
 	if req.Remark != "" {
 		updates["remark"] = req.Remark
 	}
-
 	return c.repo.UpdateFields(ctx, id, updates)
 }
 
-// Delete 删除字典数据
-// @Summary 删除字典数据
-// @Tags 字典数据
-// @Param id path int true "字典数据ID"
-// @Success 200 {object} response.Response
-// @Router /dict-data/{id} [delete]
-func (c *Controller) Delete(ctx *fiber.Ctx) error {
-	id, _ := strconv.ParseInt(ctx.Params("id"), 10, 64)
-	if id == 0 {
-		return response.BadRequest(ctx, "invalid dict data id")
+func (c *Controller) delete(ctx *fiber.Ctx) error {
+	id, err := dal.ParseInt64ID(ctx.Params("id"))
+	if err != nil {
+		return response.BadRequest(ctx, "无效的字典数据ID")
 	}
-
 	if err := c.repo.Delete(ctx.UserContext(), id); err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	return response.Success(ctx, nil)
 }
 
-// Get 获取字典数据
-// @Summary 获取字典数据详情
-// @Tags 字典数据
-// @Param id path int true "字典数据ID"
-// @Success 200 {object} response.Response
-// @Router /dict-data/{id} [get]
-func (c *Controller) Get(ctx *fiber.Ctx) error {
-	id, _ := strconv.ParseInt(ctx.Params("id"), 10, 64)
-	if id == 0 {
-		return response.BadRequest(ctx, "invalid dict data id")
+func (c *Controller) get(ctx *fiber.Ctx) error {
+	id, err := dal.ParseInt64ID(ctx.Params("id"))
+	if err != nil {
+		return response.BadRequest(ctx, "无效的字典数据ID")
 	}
-
 	dictData, err := c.repo.FindByID(ctx.UserContext(), id)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
 	if dictData == nil {
-		return response.NotFound(ctx, "dict data not found")
+		return response.NotFound(ctx, "字典数据不存在")
 	}
-
 	return response.Success(ctx, dictData)
 }
 
-// ListByType 根据类型ID获取字典数据列表
-// @Summary 根据类型ID获取字典数据列表
-// @Tags 字典数据
-// @Param typeId path int true "字典类型ID"
-// @Success 200 {object} response.Response
-// @Router /dict-data/type/{typeId} [get]
-func (c *Controller) ListByType(ctx *fiber.Ctx) error {
-	typeID, _ := strconv.ParseInt(ctx.Params("typeId"), 10, 64)
-	if typeID == 0 {
-		return response.BadRequest(ctx, "invalid type id")
+func (c *Controller) listByType(ctx *fiber.Ctx) error {
+	typeID, err := dal.ParseInt64ID(ctx.Params("typeId"))
+	if err != nil {
+		return response.BadRequest(ctx, "无效的类型ID")
 	}
-
 	list, err := c.repo.FindByTypeID(ctx.UserContext(), typeID)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	return response.Success(ctx, list)
 }
 
-// GetByCode 根据类型编码获取字典数据列表
-// @Summary 根据类型编码获取字典数据列表
-// @Tags 字典数据
-// @Param code path string true "字典类型编码"
-// @Success 200 {object} response.Response
-// @Router /dicts/{code} [get]
-func (c *Controller) GetByCode(ctx *fiber.Ctx) error {
+func (c *Controller) getByCode(ctx *fiber.Ctx) error {
 	code := ctx.Params("code")
 	if code == "" {
-		return response.BadRequest(ctx, "invalid dict code")
+		return response.BadRequest(ctx, "无效的字典编码")
 	}
-
 	list, err := c.repo.FindByTypeCode(ctx.UserContext(), code)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
 	return response.Success(ctx, list)
 }
 
-// DeleteByTypeID 根据类型ID删除所有字典数据（供内部调用）
+// DeleteByTypeID 根据类型ID删除字典数据
 func (c *Controller) DeleteByTypeID(ctx context.Context, typeID int64) error {
 	return c.repo.DeleteByTypeID(ctx, typeID)
 }
 
-// GetByTypeCode 根据类型编码获取字典数据（供内部调用）
+// GetByTypeCode 根据类型编码获取字典数据
 func (c *Controller) GetByTypeCode(ctx context.Context, code string) ([]model.DictData, error) {
 	return c.repo.FindByTypeCode(ctx, code)
 }
