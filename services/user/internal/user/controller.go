@@ -2,45 +2,39 @@ package user
 
 import (
 	"github.com/goback/pkg/auth"
-	"github.com/goback/pkg/config"
 	"github.com/goback/pkg/dal"
 	"github.com/goback/pkg/errors"
 	"github.com/goback/pkg/response"
+	"github.com/goback/pkg/router"
 	"github.com/goback/services/user/internal/model"
 	"github.com/gofiber/fiber/v2"
 )
 
 // Controller 用户控制器
 type Controller struct {
-	jwtManager *auth.JWTManager
+	JWTManager *auth.JWTManager
 }
 
-// NewController 创建用户控制器
-func NewController(jwtCfg *config.JWTConfig) *Controller {
-	return &Controller{
-		jwtManager: auth.NewJWTManager(jwtCfg),
+// Prefix 返回路由前缀
+func (c *Controller) Prefix() string {
+	return "/users"
+}
+
+// Routes 返回路由配置
+func (c *Controller) Routes(middlewares map[string]fiber.Handler) []router.Route {
+	return []router.Route{
+		// 用户管理
+		{Method: "POST", Path: "", Handler: c.create, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "PUT", Path: "/:id", Handler: c.update, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "DELETE", Path: "/:id", Handler: c.delete, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "GET", Path: "/:id", Handler: c.get, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "GET", Path: "", Handler: c.list, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "PUT", Path: "/:id/password/reset", Handler: c.resetPassword, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		// 个人信息
+		{Method: "GET", Path: "/profile", Handler: c.getProfile, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "PUT", Path: "/profile", Handler: c.updateProfile, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "PUT", Path: "/profile/password", Handler: c.changePassword, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
 	}
-}
-
-// GetJWTManager 获取JWT管理器
-func (c *Controller) GetJWTManager() *auth.JWTManager {
-	return c.jwtManager
-}
-
-// RegisterRoutes 注册路由
-func (c *Controller) RegisterRoutes(r fiber.Router, jwtMiddleware fiber.Handler) {
-	users := r.Group("/users", jwtMiddleware)
-	users.Post("", c.create)
-	users.Put("/:id", c.update)
-	users.Delete("/:id", c.delete)
-	users.Get("/:id", c.get)
-	users.Get("", c.list)
-	users.Put("/:id/password/reset", c.resetPassword)
-
-	profile := r.Group("/profile", jwtMiddleware)
-	profile.Get("", c.getProfile)
-	profile.Put("", c.updateProfile)
-	profile.Put("/password", c.changePassword)
 }
 
 func (c *Controller) create(ctx *fiber.Ctx) error {

@@ -5,6 +5,7 @@ import (
 
 	"github.com/goback/pkg/dal"
 	"github.com/goback/pkg/response"
+	"github.com/goback/pkg/router"
 	"github.com/goback/services/dict/internal/model"
 	"github.com/gofiber/fiber/v2"
 )
@@ -12,20 +13,22 @@ import (
 // Controller 字典数据控制器
 type Controller struct{}
 
-// NewController 创建字典数据控制器
-func NewController() *Controller {
-	return &Controller{}
+// Prefix 返回路由前缀
+func (c *Controller) Prefix() string {
+	return "/dict-data"
 }
 
-// RegisterRoutes 注册路由
-func (c *Controller) RegisterRoutes(r fiber.Router, jwtMiddleware fiber.Handler) {
-	g := r.Group("/dict-data", jwtMiddleware)
-	g.Post("", c.create)
-	g.Put("/:id", c.update)
-	g.Delete("/:id", c.delete)
-	g.Get("/:id", c.get)
-	g.Get("/type/:typeId", c.listByType)
-	r.Get("/dicts/:code", c.getByCode)
+// Routes 返回路由配置
+func (c *Controller) Routes(middlewares map[string]fiber.Handler) []router.Route {
+	return []router.Route{
+		{Method: "POST", Path: "", Handler: c.create, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "GET", Path: "/:id", Handler: c.get, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "GET", Path: "/type/:typeId", Handler: c.listByType, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "PUT", Path: "/:id", Handler: c.update, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "DELETE", Path: "/:id", Handler: c.delete, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		// 公开路由(无需认证)
+		{Method: "GET", Path: "/dicts/:code", Handler: c.getByCode},
+	}
 }
 
 func (c *Controller) create(ctx *fiber.Ctx) error {

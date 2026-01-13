@@ -10,12 +10,14 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/goback/pkg/auth"
 	"github.com/goback/pkg/config"
 	"github.com/goback/pkg/database"
 	"github.com/goback/pkg/logger"
 	"github.com/goback/pkg/middleware"
 	pkgRegistry "github.com/goback/pkg/registry"
-	"github.com/goback/services/user/internal/auth"
+	"github.com/goback/pkg/router"
+	authpkg "github.com/goback/services/user/internal/auth"
 	"github.com/goback/services/user/internal/dept"
 	"github.com/goback/services/user/internal/model"
 	"github.com/goback/services/user/internal/user"
@@ -46,13 +48,14 @@ func main() {
 		logger.Fatal("数据库迁移失败", zap.Error(err))
 	}
 
-	// 创建控制器
-	userCtrl := user.NewController(&cfg.JWT)
-	deptCtrl := dept.NewController()
-	authCtrl := auth.NewController(userCtrl, &cfg.JWT)
-
 	// JWT中间件
-	jwtMiddleware := middleware.JWTAuth(userCtrl.GetJWTManager())
+	jwtManager := auth.NewJWTManager(&cfg.JWT)
+	jwtMiddleware := middleware.JWTAuth(jwtManager)
+
+	// 创建控制器
+	userCtrl := &user.Controller{JWTManager: jwtManager}
+	deptCtrl := &dept.Controller{}
+	authCtrl := &authpkg.Controller{UserCtrl: userCtrl, JWTManager: jwtManager}
 
 	// 创建mDNS注册中心
 	reg := registry.NewMDNSRegistry()
@@ -65,10 +68,15 @@ func main() {
 	app.Use(middleware.Cors())
 	app.Use(middleware.RequestID())
 
+	middlewares := map[string]fiber.Handler{
+		"jwt": jwtMiddleware,
+	}
 	// 注册路由
-	authCtrl.RegisterRoutes(app, jwtMiddleware)
-	userCtrl.RegisterRoutes(app, jwtMiddleware)
-	deptCtrl.RegisterRoutes(app, jwtMiddleware)
+	router.Register(app, middlewares,
+		authCtrl,
+		userCtrl,
+		deptCtrl,
+	)
 
 	// 健康检查
 	app.Get("/health", func(c *fiber.Ctx) error {

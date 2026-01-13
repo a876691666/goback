@@ -16,6 +16,7 @@ import (
 	"github.com/goback/pkg/logger"
 	"github.com/goback/pkg/middleware"
 	pkgRegistry "github.com/goback/pkg/registry"
+	"github.com/goback/pkg/router"
 	"github.com/goback/services/menu/internal/menu"
 	"github.com/goback/services/menu/internal/model"
 	"go-micro.dev/v5/registry"
@@ -45,9 +46,6 @@ func main() {
 		logger.Fatal("数据库迁移失败", zap.Error(err))
 	}
 
-	// 创建控制器
-	menuCtrl := menu.NewController()
-
 	// JWT中间件
 	jwtManager := auth.NewJWTManager(&cfg.JWT)
 	jwtMiddleware := middleware.JWTAuth(jwtManager)
@@ -63,8 +61,11 @@ func main() {
 	app.Use(middleware.Cors())
 	app.Use(middleware.RequestID())
 
+	middlewares := map[string]fiber.Handler{
+		"jwt": jwtMiddleware,
+	}
 	// 注册路由
-	menuCtrl.RegisterRoutes(app, jwtMiddleware)
+	router.Register(app, middlewares, &menu.Controller{})
 
 	// 健康检查
 	app.Get("/health", func(c *fiber.Ctx) error {

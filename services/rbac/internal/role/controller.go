@@ -7,6 +7,7 @@ import (
 	"github.com/goback/pkg/dal"
 	"github.com/goback/pkg/errors"
 	"github.com/goback/pkg/response"
+	"github.com/goback/pkg/router"
 	"github.com/goback/services/rbac/internal/model"
 	"github.com/goback/services/rbac/internal/permission"
 	"github.com/gofiber/fiber/v2"
@@ -14,31 +15,29 @@ import (
 
 // Controller 角色控制器
 type Controller struct {
-	permCtrl      *permission.Controller
-	casbinService *auth.CasbinService
+	PermCtrl      *permission.Controller
+	CasbinService *auth.CasbinService
 }
 
-// NewController 创建角色控制器
-func NewController(permCtrl *permission.Controller) *Controller {
-	return &Controller{
-		permCtrl:      permCtrl,
-		casbinService: auth.NewCasbinService(),
+// Prefix 返回路由前缀
+func (c *Controller) Prefix() string {
+	return "/roles"
+}
+
+// Routes 返回路由配置
+func (c *Controller) Routes(middlewares map[string]fiber.Handler) []router.Route {
+	return []router.Route{
+		{Method: "POST", Path: "", Handler: c.create, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "PUT", Path: "/:id", Handler: c.update, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "DELETE", Path: "/:id", Handler: c.delete, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "GET", Path: "/:id", Handler: c.get, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "GET", Path: "", Handler: c.list, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "GET", Path: "/all", Handler: c.getAll, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "GET", Path: "/:id/permissions", Handler: c.getPermissions, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "PUT", Path: "/:id/permissions", Handler: c.setPermissions, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "GET", Path: "/:id/datascope", Handler: c.getDataScope, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "PUT", Path: "/:id/datascope", Handler: c.setDataScope, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
 	}
-}
-
-// RegisterRoutes 注册路由
-func (c *Controller) RegisterRoutes(r fiber.Router, jwtMiddleware fiber.Handler) {
-	g := r.Group("/roles", jwtMiddleware)
-	g.Post("", c.create)
-	g.Put("/:id", c.update)
-	g.Delete("/:id", c.delete)
-	g.Get("/:id", c.get)
-	g.Get("", c.list)
-	g.Get("/all", c.getAll)
-	g.Get("/:id/permissions", c.getPermissions)
-	g.Put("/:id/permissions", c.setPermissions)
-	g.Get("/:id/datascope", c.getDataScope)
-	g.Put("/:id/datascope", c.setDataScope)
 }
 
 func (c *Controller) create(ctx *fiber.Ctx) error {
@@ -132,7 +131,7 @@ func (c *Controller) delete(ctx *fiber.Ctx) error {
 		return response.BadRequest(ctx, "无效的角色ID")
 	}
 	model.RoleDataScopes.DeleteByRoleID(id)
-	c.permCtrl.DeleteRolePermissions(id)
+	c.PermCtrl.DeleteRolePermissions(id)
 	if err := model.Roles.DeleteByID(id); err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
@@ -182,7 +181,7 @@ func (c *Controller) getPermissions(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(ctx, "无效的角色ID")
 	}
-	permissions, err := c.permCtrl.GetByRoleID(id)
+	permissions, err := c.PermCtrl.GetByRoleID(id)
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
@@ -212,10 +211,10 @@ func (c *Controller) doSetPermissions(roleID int64, permissionIDs []int64) error
 	if role == nil {
 		return errors.NotFound("角色")
 	}
-	if err := c.permCtrl.SetRolePermissions(roleID, permissionIDs); err != nil {
+	if err := c.PermCtrl.SetRolePermissions(roleID, permissionIDs); err != nil {
 		return err
 	}
-	permissions, err := c.permCtrl.GetByRoleID(roleID)
+	permissions, err := c.PermCtrl.GetByRoleID(roleID)
 	if err != nil {
 		return err
 	}
@@ -223,7 +222,7 @@ func (c *Controller) doSetPermissions(roleID int64, permissionIDs []int64) error
 	for i, p := range permissions {
 		casbinPerms[i] = auth.Permission{Resource: p.Resource, Action: p.Action}
 	}
-	return c.casbinService.SetRolePermissions(role.Code, casbinPerms)
+	return c.CasbinService.SetRolePermissions(role.Code, casbinPerms)
 }
 
 func (c *Controller) getDataScope(ctx *fiber.Ctx) error {

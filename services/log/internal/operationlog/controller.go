@@ -3,21 +3,27 @@ package operationlog
 import (
 	"github.com/goback/pkg/dal"
 	"github.com/goback/pkg/response"
+	"github.com/goback/pkg/router"
 	"github.com/goback/services/log/internal/model"
 	"github.com/gofiber/fiber/v2"
 )
 
 // Controller 操作日志控制器
-type Controller struct{}
+type Controller struct {
+}
 
-func NewController() *Controller { return &Controller{} }
+// Prefix 返回路由前缀
+func (c *Controller) Prefix() string {
+	return "/operation-logs"
+}
 
-// RegisterRoutes 注册路由
-func (c *Controller) RegisterRoutes(r fiber.Router, jwtMiddleware fiber.Handler) {
-	g := r.Group("/operation-logs", jwtMiddleware)
-	g.Get("", c.list)
-	g.Delete("/:ids", c.delete)
-	g.Delete("/clear", c.clear)
+// Routes 返回路由配置
+func (c *Controller) Routes(middlewares map[string]fiber.Handler) []router.Route {
+	return []router.Route{
+		{Method: "GET", Path: "", Handler: c.list, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "DELETE", Path: "/:ids", Handler: c.delete, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "DELETE", Path: "/clear", Handler: c.clear, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+	}
 }
 
 func (c *Controller) list(ctx *fiber.Ctx) error {

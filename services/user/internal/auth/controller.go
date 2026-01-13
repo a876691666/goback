@@ -4,9 +4,9 @@ import (
 	"fmt"
 
 	pkgAuth "github.com/goback/pkg/auth"
-	"github.com/goback/pkg/config"
 	"github.com/goback/pkg/errors"
 	"github.com/goback/pkg/response"
+	"github.com/goback/pkg/router"
 	"github.com/goback/services/user/internal/model"
 	"github.com/goback/services/user/internal/user"
 	"github.com/gofiber/fiber/v2"
@@ -14,25 +14,23 @@ import (
 
 // Controller 认证控制器
 type Controller struct {
-	userCtrl   *user.Controller
-	jwtManager *pkgAuth.JWTManager
+	UserCtrl   *user.Controller
+	JWTManager *pkgAuth.JWTManager
 }
 
-// NewController 创建认证控制器
-func NewController(userCtrl *user.Controller, jwtCfg *config.JWTConfig) *Controller {
-	return &Controller{
-		userCtrl:   userCtrl,
-		jwtManager: pkgAuth.NewJWTManager(jwtCfg),
+// Prefix 返回路由前缀
+func (c *Controller) Prefix() string {
+	return "/auth"
+}
+
+// Routes 返回路由配置
+func (c *Controller) Routes(middlewares map[string]fiber.Handler) []router.Route {
+	return []router.Route{
+		{Method: "POST", Path: "/login", Handler: c.login},
+		{Method: "POST", Path: "/register", Handler: c.register},
+		{Method: "POST", Path: "/logout", Handler: c.logout, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
+		{Method: "POST", Path: "/refresh", Handler: c.refreshToken},
 	}
-}
-
-// RegisterRoutes 注册路由
-func (c *Controller) RegisterRoutes(r fiber.Router, jwtMiddleware fiber.Handler) {
-	g := r.Group("/auth")
-	g.Post("/login", c.login)
-	g.Post("/register", c.register)
-	g.Post("/logout", jwtMiddleware, c.logout)
-	g.Post("/refresh", c.refreshToken)
 }
 
 // LoginRequest 登录请求
@@ -73,7 +71,7 @@ func (c *Controller) login(ctx *fiber.Ctx) error {
 }
 
 func (c *Controller) doLogin(req *LoginRequest) (*LoginResponse, error) {
-	user, err := c.userCtrl.GetByUsername(req.Username)
+	user, err := c.UserCtrl.GetByUsername(req.Username)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +90,7 @@ func (c *Controller) doLogin(req *LoginRequest) (*LoginResponse, error) {
 	} else {
 		roleCode = fmt.Sprintf("role_%d", user.RoleID)
 	}
-	token, err := c.jwtManager.CreateTokenInfo(user.ID, user.Username, user.RoleID, roleCode)
+	token, err := c.JWTManager.CreateTokenInfo(user.ID, user.Username, user.RoleID, roleCode)
 	if err != nil {
 		return nil, errors.Wrap(err, 500, "生成令牌失败")
 	}
@@ -143,13 +141,13 @@ func (c *Controller) refreshToken(ctx *fiber.Ctx) error {
 	if len(token) > 7 && token[:7] == "Bearer " {
 		token = token[7:]
 	}
-	newToken, err := c.jwtManager.RefreshToken(token)
+	newToken, err := c.JWTManager.RefreshToken(token)
 	if err != nil {
 		return response.Unauthorized(ctx, err.Error())
 	}
 	return response.Success(ctx, &pkgAuth.TokenInfo{
 		AccessToken: newToken,
 		TokenType:   "Bearer",
-		ExpiresIn:   int64(c.jwtManager.GetExpireIn().Seconds()),
+		ExpiresIn:   int64(c.JWTManager.GetExpireIn().Seconds()),
 	})
 }

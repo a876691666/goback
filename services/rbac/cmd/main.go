@@ -16,6 +16,7 @@ import (
 	"github.com/goback/pkg/logger"
 	"github.com/goback/pkg/middleware"
 	pkgRegistry "github.com/goback/pkg/registry"
+	"github.com/goback/pkg/router"
 	"github.com/goback/services/rbac/internal/model"
 	"github.com/goback/services/rbac/internal/permission"
 	"github.com/goback/services/rbac/internal/role"
@@ -52,8 +53,11 @@ func main() {
 	}
 
 	// 创建控制器
-	permCtrl := permission.NewController()
-	roleCtrl := role.NewController(permCtrl)
+	permCtrl := &permission.Controller{}
+	roleCtrl := &role.Controller{
+		PermCtrl:      permCtrl,
+		CasbinService: auth.NewCasbinService(),
+	}
 
 	// JWT中间件
 	jwtManager := auth.NewJWTManager(&cfg.JWT)
@@ -70,9 +74,14 @@ func main() {
 	app.Use(middleware.Cors())
 	app.Use(middleware.RequestID())
 
+	middlewares := map[string]fiber.Handler{
+		"jwt": jwtMiddleware,
+	}
 	// 注册路由
-	roleCtrl.RegisterRoutes(app, jwtMiddleware)
-	permCtrl.RegisterRoutes(app, jwtMiddleware)
+	router.Register(app, middlewares,
+		roleCtrl,
+		permCtrl,
+	)
 
 	// 健康检查
 	app.Get("/health", func(c *fiber.Ctx) error {
