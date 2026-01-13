@@ -52,13 +52,8 @@ func (c *Controller) doCreate(req *CreateRequest) (*model.Permission, error) {
 	perm := &model.Permission{
 		Name:        req.Name,
 		Code:        req.Code,
-		Type:        req.Type,
 		Resource:    req.Resource,
-		Action:      req.Action,
 		Description: req.Description,
-	}
-	if perm.Type == 0 {
-		perm.Type = 1
 	}
 	if err := model.Permissions.Create(perm); err != nil {
 		return nil, err
@@ -93,14 +88,8 @@ func (c *Controller) doUpdate(id int64, req *UpdateRequest) (*model.Permission, 
 	if req.Name != "" {
 		perm.Name = req.Name
 	}
-	if req.Type > 0 {
-		perm.Type = req.Type
-	}
 	if req.Resource != "" {
 		perm.Resource = req.Resource
-	}
-	if req.Action != "" {
-		perm.Action = req.Action
 	}
 	if req.Description != "" {
 		perm.Description = req.Description

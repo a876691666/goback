@@ -19,6 +19,7 @@ import (
 	"github.com/goback/pkg/router"
 	"github.com/goback/services/rbac/internal/model"
 	"github.com/goback/services/rbac/internal/permission"
+	"github.com/goback/services/rbac/internal/permissionscope"
 	"github.com/goback/services/rbac/internal/role"
 	"go-micro.dev/v5/registry"
 	"go.uber.org/zap"
@@ -47,13 +48,19 @@ func main() {
 		&model.Role{},
 		&model.Permission{},
 		&model.RolePermission{},
-		&model.RoleDataScope{},
+		&model.PermissionScope{},
 	); err != nil {
 		logger.Fatal("数据库迁移失败", zap.Error(err))
 	}
 
+	// 初始化角色树缓存
+	if err := model.RoleTreeCache.Refresh(); err != nil {
+		logger.Warn("初始化角色树缓存失败", zap.Error(err))
+	}
+
 	// 创建控制器
 	permCtrl := &permission.Controller{}
+	permScopeCtrl := &permissionscope.Controller{}
 	roleCtrl := &role.Controller{
 		PermCtrl:      permCtrl,
 		CasbinService: auth.NewCasbinService(),
@@ -81,6 +88,7 @@ func main() {
 	router.Register(app, middlewares,
 		roleCtrl,
 		permCtrl,
+		permScopeCtrl,
 	)
 
 	// 健康检查

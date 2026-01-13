@@ -34,3 +34,8 @@ type UpdateRequest struct {
 
 // ListRequest 菜单列表请求（使用 PocketBase 风格参数）
 type ListRequest = dal.ListParams
+
+// SetRoleMenusRequest 设置角色菜单请求
+type SetRoleMenusRequest struct {
+	MenuIDs []int64 `json:"menuIds"`
+}

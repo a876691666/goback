@@ -1,0 +1,123 @@
+@startuml RBAC权限架构图
+
+title RBAC 权限架构
+
+package "user服务" as UserService {
+  entity "User\n用户" as User {
+    * id : int64
+    --
+    username : string
+    password : string
+    nickname : string
+    email : string
+    phone : string
+    avatar : string
+    status : int8
+    * role_id : int64 <<FK>>
+  }
+}
+
+package "rbac服务" as RbacService {
+  entity "Role\n角色(树表)" as Role {
+    * id : int64
+    --
+    parent_id : int64 <<FK>> (自引用)
+    name : string
+    code : string
+    status : int8
+    sort : int
+    description : string
+  }
+
+  entity "Permission\n权限" as Permission {
+    * id : int64
+    --
+    name : string
+    code : string
+    resource : string
+    description : string
+  }
+
+  entity "PermissionScope\n数据过滤规则" as PermissionScope {
+    * id : int64
+    --
+    * permission_id : int64 <<FK>>
+    name : string
+    table_name : string
+    ssql_rule : string
+    description : string
+  }
+
+  entity "RolePermission\n角色权限关联" as RolePermission {
+    * id : int64
+    --
+    * role_id : int64 <<FK>>
+    * permission_id : int64 <<FK>>
+  }
+}
+
+package "menu服务" as MenuService {
+  entity "Menu\n菜单" as Menu {
+    * id : int64
+    --
+    parent_id : int64
+    name : string
+    path : string
+    component : string
+    icon : string
+    type : int8 (1:目录 2:页面)
+    visible : int8
+    status : int8
+    redirect : string
+    sort : int
+    perm_code : string
+  }
+
+  entity "RoleMenu\n角色菜单关联" as RoleMenu {
+    * id : int64
+    --
+    * role_id : int64 <<FK>>
+    * menu_id : int64 <<FK>>
+  }
+}
+
+' 关系
+User }o--|| Role : "N:1\n一个用户只能有一个角色"
+
+Role ||--o{ Role : "parent_id\n角色树形结构"
+
+Role ||--o{ RoleMenu : "1:N"
+Menu ||--o{ RoleMenu : "1:N"
+
+Role ||--o{ RolePermission : "1:N"
+Permission ||--o{ RolePermission : "1:N"
+
+Permission ||--o{ PermissionScope : "1:N\n一个权限可有多个数据过滤规则"
+
+Menu ||--o{ Menu : "parent_id\n目录-页面两级"
+
+note right of User
+  一个用户只能有一个角色
+end note
+
+note right of Role
+  树形结构角色:
+  - parent_id 指向父角色
+  - 父角色权限 = 自身权限 ∪ 所有子角色权限
+  - 一个角色可配置多个菜单和权限
+end note
+
+note right of Permission
+  Permission用于接口鉴权
+  可关联多个PermissionScope
+  实现数据行级过滤
+end note
+
+note right of PermissionScope
+  承载SSQL规则
+  table_name: 规则指向的表
+  ssql_rule: SSQL过滤表达式
+  例如: dept_id == $user.dept_id
+end note
+
+@enduml

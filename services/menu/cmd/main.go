@@ -42,7 +42,7 @@ func main() {
 	db := database.Get()
 
 	// 自动迁移
-	if err := db.AutoMigrate(&model.Menu{}, &model.PermissionMenu{}); err != nil {
+	if err := db.AutoMigrate(&model.Menu{}, &model.RoleMenu{}, &model.PermissionMenu{}); err != nil {
 		logger.Fatal("数据库迁移失败", zap.Error(err))
 	}
 

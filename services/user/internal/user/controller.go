@@ -71,7 +71,6 @@ func (c *Controller) doCreate(req *CreateRequest) (*model.User, error) {
 		Phone:    req.Phone,
 		Avatar:   req.Avatar,
 		RoleID:   req.RoleID,
-		DeptID:   req.DeptID,
 		Status:   req.Status,
 	}
 	if user.Status == 0 {
@@ -123,9 +122,6 @@ func (c *Controller) doUpdate(id int64, req *UpdateRequest) (*model.User, error)
 	}
 	if req.RoleID > 0 {
 		user.RoleID = req.RoleID
-	}
-	if req.DeptID > 0 {
-		user.DeptID = req.DeptID
 	}
 	if req.Status > 0 {
 		user.Status = req.Status

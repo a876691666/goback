@@ -11,7 +11,6 @@ type CreateRequest struct {
 	Phone    string `json:"phone"`
 	Avatar   string `json:"avatar"`
 	RoleID   int64  `json:"roleId"`
-	DeptID   int64  `json:"deptId"`
 	Status   int8   `json:"status"`
 }
 
@@ -22,7 +21,6 @@ type UpdateRequest struct {
 	Phone    string `json:"phone"`
 	Avatar   string `json:"avatar"`
 	RoleID   int64  `json:"roleId"`
-	DeptID   int64  `json:"deptId"`
 	Status   int8   `json:"status"`
 }
 

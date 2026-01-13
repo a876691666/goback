@@ -55,7 +55,6 @@ type UserInfo struct {
 	Avatar   string `json:"avatar"`
 	RoleID   int64  `json:"roleId"`
 	RoleCode string `json:"roleCode"`
-	DeptID   int64  `json:"deptId"`
 }
 
 func (c *Controller) login(ctx *fiber.Ctx) error {
@@ -105,7 +104,6 @@ func (c *Controller) doLogin(req *LoginRequest) (*LoginResponse, error) {
 			Avatar:   user.Avatar,
 			RoleID:   user.RoleID,
 			RoleCode: roleCode,
-			DeptID:   user.DeptID,
 		},
 	}, nil
 }

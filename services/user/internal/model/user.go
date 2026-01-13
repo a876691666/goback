@@ -14,7 +14,6 @@ type User struct {
 	Avatar                string `gorm:"size:255" json:"avatar"`
 	Status                int8   `gorm:"default:1" json:"status"` // 1:正常 0:禁用
 	RoleID                int64  `gorm:"index" json:"roleId"`
-	DeptID                int64  `gorm:"index" json:"deptId"`
 	Role                  *Role  `gorm:"foreignKey:RoleID" json:"role,omitempty"`
 }
 
@@ -29,7 +28,6 @@ var Users = &User{
 			"createdAt": "created_at",
 			"updatedAt": "updated_at",
 			"roleId":    "role_id",
-			"deptId":    "dept_id",
 		},
 	},
 }
@@ -79,7 +77,6 @@ type Role struct {
 	dal.Model
 	Name        string `gorm:"size:50;not null" json:"name"`
 	Code        string `gorm:"size:50;uniqueIndex;not null" json:"code"`
-	DataScope   int8   `gorm:"default:1" json:"dataScope"`
 	Status      int8   `gorm:"default:1" json:"status"`
 	Sort        int    `gorm:"default:0" json:"sort"`
 	Description string `gorm:"size:255" json:"description"`

@@ -18,7 +18,6 @@ import (
 	pkgRegistry "github.com/goback/pkg/registry"
 	"github.com/goback/pkg/router"
 	authpkg "github.com/goback/services/user/internal/auth"
-	"github.com/goback/services/user/internal/dept"
 	"github.com/goback/services/user/internal/model"
 	"github.com/goback/services/user/internal/user"
 	"go-micro.dev/v5/registry"
@@ -44,7 +43,7 @@ func main() {
 	db := database.Get()
 
 	// 自动迁移
-	if err := db.AutoMigrate(&model.User{}, &model.Dept{}, &model.Role{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.Role{}); err != nil {
 		logger.Fatal("数据库迁移失败", zap.Error(err))
 	}
 
@@ -54,7 +53,6 @@ func main() {
 
 	// 创建控制器
 	userCtrl := &user.Controller{JWTManager: jwtManager}
-	deptCtrl := &dept.Controller{}
 	authCtrl := &authpkg.Controller{UserCtrl: userCtrl, JWTManager: jwtManager}
 
 	// 创建mDNS注册中心
@@ -75,7 +73,6 @@ func main() {
 	router.Register(app, middlewares,
 		authCtrl,
 		userCtrl,
-		deptCtrl,
 	)
 
 	// 健康检查
