@@ -33,7 +33,7 @@ func NewController(repo Repository, jwtCfg *config.JWTConfig) *Controller {
 				"roleId":    "role_id",
 				"deptId":    "dept_id",
 			}),
-	})
+	}
 }
 
 // GetJWTManager 获取JWT管理器
