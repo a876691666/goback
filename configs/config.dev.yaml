@@ -23,7 +23,7 @@ database:
 redis:
   mode: memory  # "memory" 内存模式(无需外部Redis), "standalone" 需要外部Redis服务
   host: localhost
-  port: 6379
+  port: 28090
   password: ""
   db: 0
   poolSize: 100

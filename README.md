@@ -98,7 +98,6 @@ goback/
 默认配置（[configs/config.yaml](configs/config.yaml) / [configs/config.dev.yaml](configs/config.dev.yaml)）使用：
 - SQLite（无需本地安装 MySQL）
 - Redis 内存模式（无需本地安装 Redis）
-- go-micro mDNS 注册发现（无需本地安装 Etcd）
 
 ```bash
 # 安装依赖
@@ -240,7 +239,7 @@ database:
 
 redis:
   host: localhost
-  port: 6379
+  port: 28090
   password: ""
   db: 0
 

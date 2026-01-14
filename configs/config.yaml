@@ -24,6 +24,12 @@ database:
 broadcast:
   multicastAddr: "239.255.255.250:9999"  # UDP组播地址
 
+# Redis 缓存服务配置
+redis:
+  host: localhost
+  port: 28090
+  mode: memory  # memory: 内存模式
+
 jwt:
   secret: goback-secret-key-change-in-production
   issuer: goback

@@ -10,7 +10,10 @@ import (
 	"time"
 
 	"github.com/goback/pkg/broadcast"
+	"github.com/goback/pkg/cache"
+	"github.com/goback/pkg/config"
 	"github.com/goback/pkg/logger"
+	pkgRegistry "github.com/goback/pkg/registry"
 	"github.com/gofiber/fiber/v2"
 	"go-micro.dev/v5/registry"
 	"go.uber.org/zap"
@@ -196,9 +199,19 @@ func (s *Service) Emit(event Event, metadata any) error {
 
 // Run 启动服务
 func (s *Service) Run() error {
+	// 初始化 Redis 缓存客户端
+	cfg := config.Get()
+	if cfg != nil && cfg.Redis.Host != "" {
+		cache.Init(cfg.Redis.Host, cfg.Redis.Port)
+		logger.Debug("缓存客户端已初始化",
+			zap.String("host", cfg.Redis.Host),
+			zap.Int("port", cfg.Redis.Port),
+		)
+	}
+
 	// 初始化注册中心
 	if s.registry == nil {
-		s.registry = registry.NewMDNSRegistry()
+		s.registry = pkgRegistry.NewRedisRegistry()
 	}
 
 	// 初始化广播器
@@ -306,9 +319,8 @@ func (s *Service) mountBroadcastRoute() {
 		if err := c.BodyParser(&msg); err != nil {
 			return c.SendStatus(fiber.StatusBadRequest)
 		}
-		if msg.Topic == lifecycleTopic {
-			s.handleBroadcast(&msg)
-		}
+		// 统一由广播器处理所有消息（包括生命周期和其他订阅）
+		s.broadcaster.HandleMessage(&msg)
 		return c.SendStatus(fiber.StatusOK)
 	})
 }

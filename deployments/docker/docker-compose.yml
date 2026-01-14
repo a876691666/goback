@@ -26,7 +26,7 @@ services:
     container_name: goback-redis
     restart: always
     ports:
-      - "6379:6379"
+      - "28090:28090"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -56,6 +56,21 @@ services:
     networks:
       - goback-network
 
+  # Redis 缓存微服务（内存模式 - 最先启动）
+  redis-service:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.redis
+    container_name: goback-redis-service
+    restart: always
+    environment:
+      - APP_ENV=prod
+      - ETCD_ENDPOINTS=etcd:2379
+    depends_on:
+      - etcd
+    networks:
+      - goback-network
+
   # API网关服务
   gateway:
     build:
@@ -70,6 +85,7 @@ services:
       - ETCD_ENDPOINTS=etcd:2379
     depends_on:
       - etcd
+      - redis-service
     networks:
       - goback-network
 
@@ -90,12 +106,13 @@ services:
       - DB_PASSWORD=goback123456
       - DB_NAME=goback
       - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      - REDIS_PORT=28090
       - ETCD_ENDPOINTS=etcd:2379
     depends_on:
       - mysql
       - redis
       - etcd
+      - redis-service
     networks:
       - goback-network
 
@@ -116,12 +133,13 @@ services:
       - DB_PASSWORD=goback123456
       - DB_NAME=goback
       - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      - REDIS_PORT=28090
       - ETCD_ENDPOINTS=etcd:2379
     depends_on:
       - mysql
       - redis
       - etcd
+      - redis-service
     networks:
       - goback-network
 
@@ -142,12 +160,13 @@ services:
       - DB_PASSWORD=goback123456
       - DB_NAME=goback
       - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      - REDIS_PORT=28090
       - ETCD_ENDPOINTS=etcd:2379
     depends_on:
       - mysql
       - redis
       - etcd
+      - redis-service
     networks:
       - goback-network
 
@@ -171,6 +190,7 @@ services:
     depends_on:
       - mysql
       - etcd
+      - redis-service
     networks:
       - goback-network
 
@@ -191,11 +211,27 @@ services:
       - DB_PASSWORD=goback123456
       - DB_NAME=goback
       - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      - REDIS_PORT=28090
       - ETCD_ENDPOINTS=etcd:2379
     depends_on:
       - mysql
       - redis
+      - etcd
+      - redis-service
+    networks:
+      - goback-network
+
+  # Redis 缓存微服务（内存模式 - 最先启动）
+  redis-service:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.redis
+    container_name: goback-redis-service
+    restart: always
+    environment:
+      - APP_ENV=prod
+      - ETCD_ENDPOINTS=etcd:2379
+    depends_on:
       - etcd
     networks:
       - goback-network

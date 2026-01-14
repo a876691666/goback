@@ -20,7 +20,6 @@ import (
 	"github.com/goback/services/rbac/internal/permission"
 	"github.com/goback/services/rbac/internal/permissionscope"
 	"github.com/goback/services/rbac/internal/role"
-	"go-micro.dev/v5/registry"
 	"go.uber.org/zap"
 )
 
@@ -50,8 +49,8 @@ func main() {
 	// 服务地址
 	addr := fmt.Sprintf("%s:%d", cfg.Server.HTTP.Host, servicePort)
 
-	// 创建mDNS注册中心
-	reg := registry.NewMDNSRegistry()
+	// 创建 Redis 注册中心
+	reg := pkgRegistry.NewRedisRegistry()
 
 	// 构建服务注册信息
 	svcInfo := pkgRegistry.NewServiceBuilder(serviceName, "v1.0.0").
@@ -132,8 +131,6 @@ func main() {
 			if msg.Service == serviceName {
 				return
 			}
-			// 等待 mDNS 注册中心缓存刷新
-			time.Sleep(200 * time.Millisecond)
 			s.Broadcaster().SendJSON(lifecycle.KeyRBACData, common.LoadRBACData(), msg.Service)
 			logger.Info("检测到新服务就绪", zap.String("service", msg.Service))
 		}).

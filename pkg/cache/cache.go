@@ -1,339 +1,246 @@
 package cache
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"sync"
 	"time"
 )
 
-// Item 缓存项
-type Item struct {
-	Value      []byte
-	Expiration int64 // Unix时间戳，0表示永不过期
-}
+// redisServiceURL Redis 服务地址
+var (
+	redisServiceURL = "http://localhost:28090"
+	httpClient      = &http.Client{Timeout: 3 * time.Second}
+	mu              sync.RWMutex
+	initialized     bool
+)
 
-// Expired 检查是否过期
-func (item *Item) Expired() bool {
-	if item.Expiration == 0 {
-		return false
+// Init 从配置初始化 Redis 服务地址
+func Init(host string, port int) {
+	mu.Lock()
+	defer mu.Unlock()
+	if host != "" && port > 0 {
+		redisServiceURL = fmt.Sprintf("http://%s:%d", host, port)
 	}
-	return time.Now().UnixNano() > item.Expiration
+	initialized = true
 }
 
-// Cache 内存缓存
+// SetRedisServiceURL 设置 Redis 服务地址
+func SetRedisServiceURL(url string) {
+	mu.Lock()
+	redisServiceURL = url
+	initialized = true
+	mu.Unlock()
+}
+
+// getURL 获取当前 Redis 服务地址
+func getURL() string {
+	mu.RLock()
+	defer mu.RUnlock()
+	return redisServiceURL
+}
+
+// Cache 缓存客户端
 type Cache struct {
-	items map[string]*Item
-	mu    sync.RWMutex
-	
-	// 清理相关
-	cleanupInterval time.Duration
-	stopCleanup     chan struct{}
+	baseURL string
 }
 
-// New 创建新的缓存实例
+// Global 获取全局缓存客户端
+func Global() *Cache {
+	return &Cache{baseURL: getURL()}
+}
+
+// New 创建新的缓存客户端
 func New() *Cache {
-	return NewWithCleanup(5 * time.Minute)
+	return &Cache{baseURL: getURL()}
 }
 
-// NewWithCleanup 创建带定期清理的缓存
-func NewWithCleanup(cleanupInterval time.Duration) *Cache {
-	c := &Cache{
-		items:           make(map[string]*Item),
-		cleanupInterval: cleanupInterval,
-		stopCleanup:     make(chan struct{}),
-	}
-	
-	if cleanupInterval > 0 {
-		go c.cleanupLoop()
-	}
-	
-	return c
+// NewWithURL 创建指定 URL 的缓存客户端
+func NewWithURL(url string) *Cache {
+	return &Cache{baseURL: url}
 }
 
-// cleanupLoop 定期清理过期项
-func (c *Cache) cleanupLoop() {
-	ticker := time.NewTicker(c.cleanupInterval)
-	defer ticker.Stop()
-	
-	for {
-		select {
-		case <-ticker.C:
-			c.DeleteExpired()
-		case <-c.stopCleanup:
-			return
-		}
-	}
+// setRequest 设置请求体
+type setRequest struct {
+	Key   string `json:"key"`
+	Value []byte `json:"value"`
+	TTL   int64  `json:"ttl"`
+}
+
+// getRequest 获取请求体
+type getRequest struct {
+	Key string `json:"key"`
+}
+
+// getResponse 获取响应体
+type getResponse struct {
+	Value []byte `json:"value"`
+	Found bool   `json:"found"`
+}
+
+// keysResponse 键列表响应
+type keysResponse struct {
+	Keys []string `json:"keys"`
 }
 
 // Set 设置缓存（永不过期）
-func (c *Cache) Set(key string, value interface{}) error {
+func (c *Cache) Set(key string, value any) error {
 	return c.SetWithExpiration(key, value, 0)
 }
 
 // SetWithExpiration 设置带过期时间的缓存
-func (c *Cache) SetWithExpiration(key string, value interface{}, expiration time.Duration) error {
+func (c *Cache) SetWithExpiration(key string, value any, expiration time.Duration) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("marshal value: %w", err)
 	}
-	
-	var exp int64
-	if expiration > 0 {
-		exp = time.Now().Add(expiration).UnixNano()
-	}
-	
-	c.mu.Lock()
-	c.items[key] = &Item{
-		Value:      data,
-		Expiration: exp,
-	}
-	c.mu.Unlock()
-	
-	return nil
+	return c.SetRaw(key, data, expiration)
 }
 
 // SetRaw 设置原始字节数据
-func (c *Cache) SetRaw(key string, value []byte, expiration time.Duration) {
-	var exp int64
-	if expiration > 0 {
-		exp = time.Now().Add(expiration).UnixNano()
+func (c *Cache) SetRaw(key string, value []byte, expiration time.Duration) error {
+	req := setRequest{
+		Key:   key,
+		Value: value,
+		TTL:   int64(expiration.Seconds()),
 	}
-	
-	c.mu.Lock()
-	c.items[key] = &Item{
-		Value:      value,
-		Expiration: exp,
+	body, _ := json.Marshal(req)
+
+	resp, err := httpClient.Post(c.baseURL+"/cache/set", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("redis service unavailable (%s): %w", c.baseURL, err)
 	}
-	c.mu.Unlock()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("redis service error (%s): status %d", c.baseURL, resp.StatusCode)
+	}
+	return nil
 }
 
-// Get 获取缓存并反序列化
-func (c *Cache) Get(key string, dest interface{}) error {
-	c.mu.RLock()
-	item, ok := c.items[key]
-	c.mu.RUnlock()
-	
+// Get 获取缓存
+func (c *Cache) Get(key string, dest any) error {
+	data, ok := c.GetRaw(key)
 	if !ok {
 		return fmt.Errorf("key not found: %s", key)
 	}
-	
-	if item.Expired() {
-		c.Delete(key)
-		return fmt.Errorf("key expired: %s", key)
-	}
-	
-	return json.Unmarshal(item.Value, dest)
+	return json.Unmarshal(data, dest)
 }
 
 // GetRaw 获取原始字节数据
 func (c *Cache) GetRaw(key string) ([]byte, bool) {
-	c.mu.RLock()
-	item, ok := c.items[key]
-	c.mu.RUnlock()
-	
-	if !ok || item.Expired() {
+	req := getRequest{Key: key}
+	body, _ := json.Marshal(req)
+
+	resp, err := httpClient.Post(c.baseURL+"/cache/get", "application/json", bytes.NewReader(body))
+	if err != nil {
 		return nil, false
 	}
-	
-	return item.Value, true
-}
+	defer resp.Body.Close()
 
-// GetString 获取字符串值
-func (c *Cache) GetString(key string) (string, bool) {
-	data, ok := c.GetRaw(key)
-	if !ok {
-		return "", false
+	if resp.StatusCode != 200 {
+		return nil, false
 	}
-	
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return string(data), true
+
+	respBody, _ := io.ReadAll(resp.Body)
+	var result getResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, false
 	}
-	return s, true
+
+	return result.Value, result.Found
 }
 
 // Delete 删除缓存
 func (c *Cache) Delete(key string) {
-	c.mu.Lock()
-	delete(c.items, key)
-	c.mu.Unlock()
-}
+	req := getRequest{Key: key}
+	body, _ := json.Marshal(req)
 
-// DeletePrefix 删除指定前缀的所有缓存
-func (c *Cache) DeletePrefix(prefix string) int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	
-	count := 0
-	for key := range c.items {
-		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
-			delete(c.items, key)
-			count++
-		}
+	resp, err := httpClient.Post(c.baseURL+"/cache/delete", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return
 	}
-	return count
+	resp.Body.Close()
 }
 
-// DeleteExpired 删除所有过期项
-func (c *Cache) DeleteExpired() {
-	now := time.Now().UnixNano()
-	
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	
-	for key, item := range c.items {
-		if item.Expiration > 0 && now > item.Expiration {
-			delete(c.items, key)
-		}
-	}
-}
-
-// Exists 检查key是否存在
+// Exists 检查键是否存在
 func (c *Cache) Exists(key string) bool {
-	c.mu.RLock()
-	item, ok := c.items[key]
-	c.mu.RUnlock()
-	
-	if !ok {
+	req := getRequest{Key: key}
+	body, _ := json.Marshal(req)
+
+	resp, err := httpClient.Post(c.baseURL+"/cache/exists", "application/json", bytes.NewReader(body))
+	if err != nil {
 		return false
 	}
-	
-	if item.Expired() {
-		c.Delete(key)
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	var result map[string]bool
+	if err := json.Unmarshal(respBody, &result); err != nil {
 		return false
 	}
-	
-	return true
+
+	return result["exists"]
 }
 
-// Keys 获取所有key
+// Keys 获取所有键
 func (c *Cache) Keys() []string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	
-	keys := make([]string, 0, len(c.items))
-	now := time.Now().UnixNano()
-	
-	for key, item := range c.items {
-		if item.Expiration == 0 || now <= item.Expiration {
-			keys = append(keys, key)
-		}
+	resp, err := httpClient.Get(c.baseURL + "/cache/keys")
+	if err != nil {
+		return nil
 	}
-	
-	return keys
-}
+	defer resp.Body.Close()
 
-// Count 获取缓存数量
-func (c *Cache) Count() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return len(c.items)
+	respBody, _ := io.ReadAll(resp.Body)
+	var result keysResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil
+	}
+
+	return result.Keys
 }
 
 // Clear 清空所有缓存
 func (c *Cache) Clear() {
-	c.mu.Lock()
-	c.items = make(map[string]*Item)
-	c.mu.Unlock()
-}
-
-// Close 关闭缓存（停止清理协程）
-func (c *Cache) Close() {
-	if c.cleanupInterval > 0 {
-		close(c.stopCleanup)
-	}
-}
-
-// GetOrSet 获取缓存，如果不存在则设置
-func (c *Cache) GetOrSet(key string, dest interface{}, setter func() (interface{}, error), expiration time.Duration) error {
-	// 先尝试获取
-	if err := c.Get(key, dest); err == nil {
-		return nil
-	}
-	
-	// 不存在，调用setter获取值
-	value, err := setter()
+	resp, err := httpClient.Post(c.baseURL+"/cache/clear", "application/json", nil)
 	if err != nil {
-		return err
+		return
 	}
-	
-	// 设置缓存
-	if err := c.SetWithExpiration(key, value, expiration); err != nil {
-		return err
-	}
-	
-	// 重新获取（确保dest被正确赋值）
-	return c.Get(key, dest)
+	resp.Body.Close()
 }
 
-// SetNX 仅当key不存在时设置
-func (c *Cache) SetNX(key string, value interface{}, expiration time.Duration) (bool, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	
-	if item, ok := c.items[key]; ok && !item.Expired() {
-		return false, nil
-	}
-	
-	data, err := json.Marshal(value)
-	if err != nil {
-		return false, err
-	}
-	
-	var exp int64
-	if expiration > 0 {
-		exp = time.Now().Add(expiration).UnixNano()
-	}
-	
-	c.items[key] = &Item{
-		Value:      data,
-		Expiration: exp,
-	}
-	
-	return true, nil
+// Close 关闭（兼容接口，无实际操作）
+func (c *Cache) Close() {}
+
+// Count 获取缓存项数量
+func (c *Cache) Count() int {
+	return len(c.Keys())
 }
 
-// Incr 自增（仅支持int64）
-func (c *Cache) Incr(key string) (int64, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	
-	var val int64 = 0
-	
-	if item, ok := c.items[key]; ok && !item.Expired() {
-		if err := json.Unmarshal(item.Value, &val); err != nil {
-			return 0, fmt.Errorf("value is not int64")
-		}
-	}
-	
-	val++
-	data, _ := json.Marshal(val)
-	
-	if item, ok := c.items[key]; ok {
-		item.Value = data
-	} else {
-		c.items[key] = &Item{Value: data}
-	}
-	
-	return val, nil
+// 全局便捷函数
+func Set(key string, value any) error {
+	return Global().Set(key, value)
 }
 
-// Expire 设置key的过期时间
-func (c *Cache) Expire(key string, expiration time.Duration) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	
-	item, ok := c.items[key]
-	if !ok {
-		return false
-	}
-	
-	if expiration > 0 {
-		item.Expiration = time.Now().Add(expiration).UnixNano()
-	} else {
-		item.Expiration = 0
-	}
-	
-	return true
+func Get(key string, dest any) error {
+	return Global().Get(key, dest)
+}
+
+func Delete(key string) {
+	Global().Delete(key)
+}
+
+func Exists(key string) bool {
+	return Global().Exists(key)
+}
+
+func Clear() {
+	Global().Clear()
+}
+
+func Close() {
+	// no-op
 }

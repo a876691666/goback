@@ -17,7 +17,6 @@ import (
 	"github.com/goback/pkg/router"
 	"github.com/goback/services/menu/internal/menu"
 	"github.com/goback/services/menu/internal/model"
-	"go-micro.dev/v5/registry"
 	"go.uber.org/zap"
 )
 
@@ -47,8 +46,8 @@ func main() {
 	// 服务地址
 	addr := fmt.Sprintf("%s:%d", cfg.Server.HTTP.Host, servicePort)
 
-	// 创建mDNS注册中心
-	reg := registry.NewMDNSRegistry()
+	// 创建 Redis 注册中心
+	reg := pkgRegistry.NewRedisRegistry()
 
 	// 构建服务注册信息
 	svcInfo := pkgRegistry.NewServiceBuilder(serviceName, "v1.0.0").

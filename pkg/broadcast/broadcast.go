@@ -178,6 +178,11 @@ func (b *Broadcaster) handleMessage(msg *Message) {
 	}
 }
 
+// HandleMessage 公开的消息处理方法（供外部调用）
+func (b *Broadcaster) HandleMessage(msg *Message) {
+	b.handleMessage(msg)
+}
+
 // Start 启动广播器
 func (b *Broadcaster) Start() error {
 	logger.Info("广播器已启动",
