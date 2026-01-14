@@ -16,21 +16,15 @@
 
 ```
 goback/
-├── cmd/                        # 各服务启动入口
+├── services/                   # 各服务
 │   ├── gateway/               # 网关服务 (8080)
+│   │   ├── cmd/               # 启动入口
+│   │   └── internal/          # 服务实现
 │   ├── user/                  # 用户服务 (8081)
 │   ├── rbac/                  # 权限服务 (8082)
 │   ├── menu/                  # 菜单服务 (8083)
 │   ├── log/                   # 日志服务 (8084)
 │   └── dict/                  # 字典服务 (8085)
-├── internal/                   # 内部包
-│   ├── gateway/               # 网关服务实现
-│   ├── user/                  # 用户服务实现
-│   ├── rbac/                  # 权限服务实现
-│   ├── menu/                  # 菜单服务实现
-│   ├── log/                   # 日志服务实现
-│   ├── dict/                  # 字典服务实现
-│   └── model/                 # 数据模型
 ├── pkg/                        # 公共包
 │   ├── config/                # 配置管理 (Viper)
 │   ├── logger/                # 日志管理 (Zap)
@@ -101,6 +95,11 @@ goback/
 
 ### 本地开发
 
+默认配置（[configs/config.yaml](configs/config.yaml) / [configs/config.dev.yaml](configs/config.dev.yaml)）使用：
+- SQLite（无需本地安装 MySQL）
+- Redis 内存模式（无需本地安装 Redis）
+- go-micro mDNS 注册发现（无需本地安装 Etcd）
+
 ```bash
 # 安装依赖
 make deps
@@ -108,13 +107,13 @@ make deps
 # 构建所有服务
 make build
 
-# 运行单个服务
-make run-gateway
+# 运行所有服务（建议分别开 6 个终端窗口执行）
 make run-user
 make run-rbac
 make run-menu
 make run-log
 make run-dict
+make run-gateway
 ```
 
 ### Docker 部署

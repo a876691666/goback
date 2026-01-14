@@ -24,7 +24,7 @@ import (
 
 const (
 	serviceName = "log-service"
-	servicePort = 8085
+	servicePort = 8084
 	basePath    = "logs"
 )
 

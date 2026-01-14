@@ -8,8 +8,21 @@ GOBUILD=$(GO) build
 
 # 项目变量
 PROJECT_NAME=goback
-VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "v0.0.0")
-BUILD_TIME=$(shell date +%FT%T%z)
+ifeq ($(OS),Windows_NT)
+  VERSION=$(shell git describe --tags --always --dirty 2>NUL || echo v0.0.0)
+  BUILD_TIME=$(shell powershell -NoProfile -Command "(Get-Date).ToString('yyyy-MM-ddTHH:mm:ssK')")
+  ENV_PREFIX=set "CGO_ENABLED=0"&&
+  MKDIR_BIN=if not exist $(OUTPUT_DIR) mkdir $(OUTPUT_DIR)
+  RM_BIN=if exist $(OUTPUT_DIR) rmdir /S /Q $(OUTPUT_DIR)
+  RM_COV=if exist coverage.out del /Q coverage.out & if exist coverage.html del /Q coverage.html
+else
+  VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo v0.0.0)
+  BUILD_TIME=$(shell date +%FT%T%z)
+  ENV_PREFIX=CGO_ENABLED=0
+  MKDIR_BIN=mkdir -p $(OUTPUT_DIR)
+  RM_BIN=rm -rf $(OUTPUT_DIR)
+  RM_COV=rm -f coverage.out coverage.html
+endif
 LDFLAGS=-ldflags "-X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME)"
 
 # 服务列表
@@ -53,23 +66,23 @@ build: $(SERVICES)
 
 $(SERVICES):
 	@echo "Building $@..."
-	@mkdir -p $(OUTPUT_DIR)
-	CGO_ENABLED=0 $(GOBUILD) $(LDFLAGS) -o $(OUTPUT_DIR)/$@ ./cmd/$@
+	@$(MKDIR_BIN)
+	$(ENV_PREFIX) $(GOBUILD) $(LDFLAGS) -o $(OUTPUT_DIR)/$@ ./services/$@/cmd
 
 # 构建单个服务
 build-%:
 	@echo "Building $*..."
-	@mkdir -p $(OUTPUT_DIR)
-	CGO_ENABLED=0 $(GOBUILD) $(LDFLAGS) -o $(OUTPUT_DIR)/$* ./cmd/$*
+	@$(MKDIR_BIN)
+	$(ENV_PREFIX) $(GOBUILD) $(LDFLAGS) -o $(OUTPUT_DIR)/$* ./services/$*/cmd
 
 # 运行服务
 run-%:
-	$(GO) run ./cmd/$*/main.go
+	$(GO) run ./services/$*/cmd
 
 # 清理
 clean:
-	rm -rf $(OUTPUT_DIR)
-	rm -f coverage.out coverage.html
+	@$(RM_BIN)
+	@$(RM_COV)
 
 # Docker构建
 docker-build:
@@ -93,7 +106,7 @@ docker-down:
 # 生成Swagger文档
 swagger:
 	@if command -v swag >/dev/null 2>&1; then \
-		swag init -g cmd/gateway/main.go -o docs/swagger; \
+		swag init -g services/gateway/cmd/main.go -o docs/swagger; \
 	else \
 		echo "swag is not installed. Run: go install github.com/swaggo/swag/cmd/swag@latest"; \
 	fi

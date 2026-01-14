@@ -24,7 +24,7 @@ import (
 
 const (
 	serviceName = "dict-service"
-	servicePort = 8084
+	servicePort = 8085
 	basePath    = "dicts"
 )
 
