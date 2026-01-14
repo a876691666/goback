@@ -1,11 +1,8 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -13,6 +10,7 @@ import (
 	"github.com/goback/pkg/auth"
 	"github.com/goback/pkg/config"
 	"github.com/goback/pkg/database"
+	"github.com/goback/pkg/lifecycle"
 	"github.com/goback/pkg/logger"
 	"github.com/goback/pkg/middleware"
 	pkgRegistry "github.com/goback/pkg/registry"
@@ -21,6 +19,12 @@ import (
 	"github.com/goback/services/menu/internal/model"
 	"go-micro.dev/v5/registry"
 	"go.uber.org/zap"
+)
+
+const (
+	serviceName = "menu-service"
+	servicePort = 8083
+	basePath    = "menus"
 )
 
 func main() {
@@ -35,23 +39,28 @@ func main() {
 	logger.Init(&cfg.Log)
 	defer logger.Sync()
 
+	// 初始化Redis（生命周期系统依赖）
+	if err := database.InitRedis(&cfg.Redis); err != nil {
+		logger.Fatal("初始化Redis失败", zap.Error(err))
+	}
+	defer database.CloseRedis()
+
 	// 初始化数据库
 	if err := database.Init(&cfg.Database); err != nil {
 		logger.Fatal("初始化数据库失败", zap.Error(err))
 	}
-	db := database.Get()
 
-	// 自动迁移
-	if err := db.AutoMigrate(&model.Menu{}, &model.RoleMenu{}, &model.PermissionMenu{}); err != nil {
-		logger.Fatal("数据库迁移失败", zap.Error(err))
-	}
-
-	// JWT中间件
-	jwtManager := auth.NewJWTManager(&cfg.JWT)
-	jwtMiddleware := middleware.JWTAuth(jwtManager)
+	// 服务地址
+	addr := fmt.Sprintf("%s:%d", cfg.Server.HTTP.Host, servicePort)
 
 	// 创建mDNS注册中心
 	reg := registry.NewMDNSRegistry()
+
+	// 构建服务注册信息
+	svcInfo := pkgRegistry.NewServiceBuilder(serviceName, "v1.0.0").
+		WithAddress(addr).
+		WithBasePath(basePath).
+		Build()
 
 	// 创建Fiber应用
 	app := fiber.New()
@@ -61,64 +70,78 @@ func main() {
 	app.Use(middleware.Cors())
 	app.Use(middleware.RequestID())
 
-	middlewares := map[string]fiber.Handler{
-		"jwt": jwtMiddleware,
-	}
-	// 注册路由
-	router.Register(app, middlewares, &menu.Controller{})
-
 	// 健康检查
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.Status(200).JSON(fiber.Map{
 			"status":  "healthy",
-			"service": "menu-service",
+			"service": serviceName,
 			"time":    time.Now().Format(time.RFC3339),
 		})
 	})
 
-	// 服务地址
-	addr := fmt.Sprintf("%s:%d", cfg.Server.HTTP.Host, 8083)
+	// 声明服务变量（用于闭包）
+	var svc *lifecycle.Service
 
-	// 注册服务
-	svc := pkgRegistry.NewServiceBuilder("menu-service", "v1.0.0").
+	// 创建服务
+	svc = lifecycle.NewBuilder(serviceName).
+		WithNodeID(serviceName + "-1").
 		WithAddress(addr).
-		WithBasePath("menus").
+		WithRegistry(reg).
+		WithService(svcInfo).
+		WithApp(app).
+		OnStart(func(ctx *lifecycle.ServiceContext) error {
+			// 数据库迁移
+			db := database.Get()
+			if err := db.AutoMigrate(&model.Menu{}, &model.RoleMenu{}, &model.PermissionMenu{}); err != nil {
+				return fmt.Errorf("数据库迁移失败: %w", err)
+			}
+			logger.Info("数据库迁移完成")
+
+			// JWT中间件
+			jwtManager := auth.NewJWTManager(&cfg.JWT)
+			jwtMiddleware := middleware.JWTAuth(jwtManager)
+
+			// 创建控制器（传入ServiceContext）
+			baseCtrl := router.NewBaseController(ctx)
+			menuCtrl := &menu.Controller{BaseController: baseCtrl}
+
+			middlewares := map[string]fiber.Handler{
+				"jwt": jwtMiddleware,
+			}
+			// 注册路由
+			router.Register(app, middlewares, menuCtrl)
+
+			return nil
+		}).
+		OnReady(func(ctx *lifecycle.ServiceContext) error {
+			// 订阅RBAC权限更新
+			cache := ctx.Cache()
+			cache.Subscribe("rbac-service", lifecycle.ModuleRBAC, func(msg *lifecycle.CacheMessage) {
+				logger.Info("收到RBAC缓存更新",
+					zap.String("key", msg.Key),
+					zap.String("action", msg.Action),
+				)
+			})
+
+			logger.Info("菜单服务就绪", zap.String("addr", addr))
+			return nil
+		}).
+		OnStop(func(ctx *lifecycle.ServiceContext) error {
+			logger.Info("菜单服务正在清理资源...")
+			return nil
+		}).
 		Build()
 
-	if err := reg.Register(svc); err != nil {
-		logger.Fatal("注册服务失败", zap.Error(err))
-	}
-
-	// 启动服务
-	go func() {
-		logger.Info("菜单服务启动",
-			zap.String("addr", addr),
-			zap.String("env", cfg.App.Env),
-		)
-		if err := app.Listen(addr); err != nil {
-			logger.Fatal("启动服务失败", zap.Error(err))
+	// 监听其他服务的生命周期
+	svc.Lifecycle().OnEvent(lifecycle.EventReady, func(msg *lifecycle.LifecycleMessage) {
+		if msg.Service == serviceName {
+			return
 		}
-	}()
+		logger.Info("检测到服务就绪", zap.String("service", msg.Service))
+	})
 
-	// 优雅关闭
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-
-	logger.Info("正在关闭服务...")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = ctx
-
-	// 注销服务
-	if err := reg.Deregister(svc); err != nil {
-		logger.Error("注销服务失败", zap.Error(err))
+	// 运行服务
+	if err := svc.Run(); err != nil {
+		logger.Fatal("服务运行失败", zap.Error(err))
 	}
-
-	if err := app.Shutdown(); err != nil {
-		logger.Error("服务关闭异常", zap.Error(err))
-	}
-
-	logger.Info("服务已关闭")
 }

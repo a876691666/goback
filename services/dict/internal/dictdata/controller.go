@@ -11,7 +11,9 @@ import (
 )
 
 // Controller 字典数据控制器
-type Controller struct{}
+type Controller struct {
+	router.BaseController
+}
 
 // Prefix 返回路由前缀
 func (c *Controller) Prefix() string {

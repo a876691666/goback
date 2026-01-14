@@ -14,6 +14,7 @@ import (
 
 // Controller 认证控制器
 type Controller struct {
+	router.BaseController
 	UserCtrl   *user.Controller
 	JWTManager *pkgAuth.JWTManager
 }

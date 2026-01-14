@@ -12,6 +12,7 @@ import (
 
 // Controller 用户控制器
 type Controller struct {
+	router.BaseController
 	JWTManager *auth.JWTManager
 }
 

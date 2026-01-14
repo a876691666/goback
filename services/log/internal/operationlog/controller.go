@@ -10,6 +10,7 @@ import (
 
 // Controller 操作日志控制器
 type Controller struct {
+	router.BaseController
 }
 
 // Prefix 返回路由前缀

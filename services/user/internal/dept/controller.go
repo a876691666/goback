@@ -10,7 +10,9 @@ import (
 )
 
 // Controller 部门控制器
-type Controller struct{}
+type Controller struct {
+	router.BaseController
+}
 
 // FindAllEnabled 查找所有启用的部门
 func (c *Controller) FindAllEnabled() ([]model.Dept, error) {

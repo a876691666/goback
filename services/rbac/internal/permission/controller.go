@@ -3,6 +3,7 @@ package permission
 import (
 	"github.com/goback/pkg/dal"
 	"github.com/goback/pkg/errors"
+	"github.com/goback/pkg/lifecycle"
 	"github.com/goback/pkg/response"
 	"github.com/goback/pkg/router"
 	"github.com/goback/services/rbac/internal/model"
@@ -10,7 +11,9 @@ import (
 )
 
 // Controller 权限控制器
-type Controller struct{}
+type Controller struct {
+	router.BaseController
+}
 
 // Prefix 返回路由前缀
 func (c *Controller) Prefix() string {
@@ -38,6 +41,8 @@ func (c *Controller) create(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
+	// 广播权限变更
+	c.broadcastPermissions()
 	return response.Success(ctx, perm)
 }
 
@@ -53,6 +58,7 @@ func (c *Controller) doCreate(req *CreateRequest) (*model.Permission, error) {
 		Name:        req.Name,
 		Code:        req.Code,
 		Resource:    req.Resource,
+		Action:      req.Action,
 		Description: req.Description,
 	}
 	if err := model.Permissions.Create(perm); err != nil {
@@ -74,6 +80,8 @@ func (c *Controller) update(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
+	// 广播权限变更
+	c.broadcastPermissions()
 	return response.Success(ctx, perm)
 }
 
@@ -90,6 +98,9 @@ func (c *Controller) doUpdate(id int64, req *UpdateRequest) (*model.Permission, 
 	}
 	if req.Resource != "" {
 		perm.Resource = req.Resource
+	}
+	if req.Action != "" {
+		perm.Action = req.Action
 	}
 	if req.Description != "" {
 		perm.Description = req.Description
@@ -108,6 +119,8 @@ func (c *Controller) delete(ctx *fiber.Ctx) error {
 	if err := model.Permissions.DeleteByID(id); err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
+	// 广播权限变更
+	c.broadcastPermissions()
 	return response.Success(ctx, nil)
 }
 
@@ -168,10 +181,89 @@ func (c *Controller) SetRolePermissions(roleID int64, permissionIDs []int64) err
 			PermissionID: permID,
 		}
 	}
-	return model.RolePermissions.CreateBatch(rps)
+	if err := model.RolePermissions.CreateBatch(rps); err != nil {
+		return err
+	}
+	// 广播角色权限变更
+	c.broadcastRolePermissions()
+	return nil
 }
 
 // DeleteRolePermissions 删除角色权限
 func (c *Controller) DeleteRolePermissions(roleID int64) error {
-	return model.RolePermissions.DeleteByRoleID(roleID)
+	if err := model.RolePermissions.DeleteByRoleID(roleID); err != nil {
+		return err
+	}
+	// 广播角色权限变更
+	c.broadcastRolePermissions()
+	return nil
+}
+
+// broadcastPermissions 广播权限数据
+func (c *Controller) broadcastPermissions() {
+	go func() {
+		permissions := LoadPermissions()
+		c.Broadcast(lifecycle.ModuleRBAC, lifecycle.KeyPermissions, permissions)
+	}()
+}
+
+// broadcastRolePermissions 广播角色权限映射
+func (c *Controller) broadcastRolePermissions() {
+	go func() {
+		rolePerms := LoadRolePermissions()
+		c.Broadcast(lifecycle.ModuleRBAC, lifecycle.KeyRolePermissions, rolePerms)
+	}()
+}
+
+// LoadPermissions 加载所有权限（导出供其他模块使用）
+func LoadPermissions() []lifecycle.Permission {
+	var perms []model.Permission
+	if err := model.Permissions.DB().Find(&perms).Error; err != nil {
+		return nil
+	}
+
+	result := make([]lifecycle.Permission, len(perms))
+	for i, p := range perms {
+		result[i] = lifecycle.Permission{
+			ID:       p.ID,
+			Code:     p.Code,
+			Name:     p.Name,
+			Resource: p.Resource,
+			Action:   p.Action,
+		}
+	}
+	return result
+}
+
+// LoadRolePermissions 加载角色权限映射
+func LoadRolePermissions() lifecycle.RolePermissionMap {
+	result := make(lifecycle.RolePermissionMap)
+	
+	var rolePerms []model.RolePermission
+	model.RolePermissions.DB().Find(&rolePerms)
+	
+	// 按角色分组
+	rolePermMap := make(map[int64][]int64)
+	for _, rp := range rolePerms {
+		rolePermMap[rp.RoleID] = append(rolePermMap[rp.RoleID], rp.PermissionID)
+	}
+	
+	// 获取所有权限
+	permMap := make(map[int64]lifecycle.Permission)
+	for _, p := range LoadPermissions() {
+		permMap[p.ID] = p
+	}
+	
+	// 构建角色权限映射
+	for roleID, permIDs := range rolePermMap {
+		perms := make([]lifecycle.Permission, 0, len(permIDs))
+		for _, permID := range permIDs {
+			if p, ok := permMap[permID]; ok {
+				perms = append(perms, p)
+			}
+		}
+		result[roleID] = perms
+	}
+	
+	return result
 }
