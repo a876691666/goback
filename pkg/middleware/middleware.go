@@ -6,6 +6,7 @@ import (
 
 	"github.com/goback/pkg/auth"
 	"github.com/goback/pkg/errors"
+	"github.com/goback/pkg/lifecycle"
 	"github.com/goback/pkg/logger"
 	"github.com/goback/pkg/response"
 	"github.com/gofiber/fiber/v2"
@@ -41,27 +42,6 @@ func JWTAuth(jwtManager *auth.JWTManager) fiber.Handler {
 		c.Locals("roleId", claims.RoleID)
 		c.Locals("roleCode", claims.RoleCode)
 		c.Locals("claims", claims)
-
-		return c.Next()
-	}
-}
-
-// Permission 权限验证中间件
-func Permission(casbinSvc *auth.CasbinService) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		roleCode := c.Locals("roleCode")
-		if roleCode == nil {
-			return response.Error(c, 403, "未获取到角色信息")
-		}
-
-		// 获取请求路径和方法
-		obj := c.Path()
-		act := c.Method()
-
-		// 检查权限
-		if !casbinSvc.HasPermission(roleCode.(string), obj, act) {
-			return response.Error(c, 403, "没有访问权限")
-		}
 
 		return c.Next()
 	}
@@ -267,39 +247,6 @@ func randomString(n int) string {
 	return string(b)
 }
 
-// DataScope 数据权限中间件
-func DataScope(dataScopeFunc func(userID int64, roleID int64) (*auth.DataScopeInfo, error)) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		userID := c.Locals("userId")
-		if userID == nil {
-			return c.Next()
-		}
-
-		roleID := c.Locals("roleId")
-		if roleID == nil {
-			return c.Next()
-		}
-
-		scopeInfo, err := dataScopeFunc(userID.(int64), roleID.(int64))
-		if err != nil {
-			logger.Error("获取数据权限失败", zap.Error(err))
-			return c.Next()
-		}
-
-		c.Locals("dataScope", scopeInfo)
-		return c.Next()
-	}
-}
-
-// GetDataScope 从上下文获取数据权限
-func GetDataScope(c *fiber.Ctx) *auth.DataScopeInfo {
-	scopeInfo := c.Locals("dataScope")
-	if scopeInfo == nil {
-		return nil
-	}
-	return scopeInfo.(*auth.DataScopeInfo)
-}
-
 // GetUserID 从上下文获取用户ID
 func GetUserID(c *fiber.Ctx) int64 {
 	userID := c.Locals("userId")
@@ -351,4 +298,117 @@ func ErrorHandler() fiber.Handler {
 		}
 		return nil
 	}
+}
+
+// RBACAuth RBAC权限认证中间件
+// 使用 RBACCache 作为数据源，自动订阅 RBAC 数据更新
+func RBACAuth(rbacCache *lifecycle.RBACCache) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// 1. 获取用户ID和角色ID
+		userID := c.Locals("userId")
+		roleID := c.Locals("roleId")
+		if userID == nil || roleID == nil {
+			return response.Error(c, 401, "未获取到用户信息")
+		}
+
+		roleIDInt := roleID.(int64)
+
+		// 2. 检查RBAC缓存是否就绪
+		if !rbacCache.IsReady() {
+			logger.Warn("RBAC缓存未就绪")
+			return response.Error(c, 500, "权限系统初始化中，请稍后重试")
+		}
+
+		// 3. 获取角色及其所有启用的子角色ID
+		roleIDs, err := rbacCache.GetRoleAndDescendantIDs(roleIDInt)
+		if err != nil {
+			logger.Error("获取角色信息失败", zap.Error(err), zap.Int64("roleId", roleIDInt))
+			return response.Error(c, 403, err.Error())
+		}
+
+		// 4. 聚合所有角色的权限
+		permissionMap := rbacCache.GetAggregatedPermissions(roleIDs)
+
+		// 5. 验证当前请求是否有权限
+		path := c.Path()
+		method := c.Method()
+
+		hasPermission := false
+		for _, perm := range permissionMap {
+			if matchPermission(perm, path, method) {
+				hasPermission = true
+				break
+			}
+		}
+
+		if !hasPermission {
+			return response.Error(c, 403, "没有访问权限")
+		}
+
+		// 6. 将权限信息存入上下文，供后续使用
+		permissions := make([]lifecycle.Permission, 0, len(permissionMap))
+		for _, perm := range permissionMap {
+			permissions = append(permissions, perm)
+		}
+		c.Locals("permissions", permissions)
+		c.Locals("roleIds", roleIDs)
+
+		return c.Next()
+	}
+}
+
+// matchPermission 匹配权限
+func matchPermission(perm lifecycle.Permission, path, method string) bool {
+	// Resource 支持通配符匹配
+	// 例如: /api/users/* 可以匹配 /api/users/1
+	if !matchPath(perm.Resource, path) {
+		return false
+	}
+
+	// Action 匹配 HTTP 方法
+	// 支持: GET, POST, PUT, DELETE, PATCH, * (所有方法)
+	if perm.Action != "*" && !strings.EqualFold(perm.Action, method) {
+		return false
+	}
+
+	return true
+}
+
+// matchPath 路径匹配（支持通配符）
+func matchPath(pattern, path string) bool {
+	// 精确匹配
+	if pattern == path {
+		return true
+	}
+
+	// 通配符匹配
+	if strings.HasSuffix(pattern, "/*") {
+		prefix := strings.TrimSuffix(pattern, "/*")
+		return strings.HasPrefix(path, prefix)
+	}
+
+	// ** 匹配所有路径
+	if pattern == "**" || pattern == "/*" {
+		return true
+	}
+
+	return false
+}
+
+// GetPermissions 从上下文获取用户权限列表
+func GetPermissions(c *fiber.Ctx) []lifecycle.Permission {
+	permissions := c.Locals("permissions")
+	if permissions == nil {
+		return []lifecycle.Permission{}
+	}
+	return permissions.([]lifecycle.Permission)
+}
+
+// GetRoleIDs 从上下文获取用户角色ID列表（包含子角色）
+func GetRoleIDs(c *fiber.Ctx) []int64 {
+	roleIDs := c.Locals("roleIds")
+	if roleIDs == nil {
+		return []int64{}
+	}
+	return roleIDs.([]int64)
 }

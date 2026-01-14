@@ -1,86 +1,104 @@
 package auth
 
 import (
-	"fmt"
+	"context"
 
+	"github.com/goback/pkg/lifecycle"
+	"github.com/goback/pkg/logger"
 	"github.com/goback/pkg/ssql"
+	"go.uber.org/zap"
 )
 
-// DataScopeType 数据权限类型
-type DataScopeType int
+// ========================= RBAC 数据权限函数 =========================
+// 使用 lifecycle.RBACCache 作为统一的数据源
 
-// 数据权限类型常量
-const (
-	DataScopeAll  DataScopeType = 1 // 全部数据
-	DataScopeSelf DataScopeType = 2 // 仅本人数据
-)
-
-// DataScopeInfo 数据权限信息
-type DataScopeInfo struct {
-	Type      DataScopeType `json:"type"`
-	UserID    int64         `json:"userId"`    // 用户ID
-	UserField string        `json:"userField"` // 用户字段名,默认 created_by
-}
-
-// NewDataScopeInfo 创建数据权限信息
-func NewDataScopeInfo(scopeType DataScopeType, userID int64) *DataScopeInfo {
-	return &DataScopeInfo{
-		Type:      scopeType,
-		UserID:    userID,
-		UserField: "created_by",
+// BuildDataScopeSSQL 基于user->role->permission->permissionScope架构，从RBAC缓存生成SSQL对象
+// 使用 RBACCache 作为数据源，自动订阅 RBAC 数据更新
+func BuildDataScopeSSQL(
+	ctx context.Context,
+	rbacCache *lifecycle.RBACCache,
+	userID int64,
+	roleID int64,
+	tableName string,
+	resource string,
+) (*ssql.Builder, error) {
+	// 获取角色及其所有启用的后代角色ID
+	roleIDs, err := rbacCache.GetRoleAndDescendantIDs(roleID)
+	if err != nil {
+		return nil, err
 	}
-}
+	logger.Debug("收集角色ID", zap.Int64("roleID", roleID), zap.Int64s("allRoleIDs", roleIDs))
 
-// WithUserField 设置用户字段名
-func (d *DataScopeInfo) WithUserField(field string) *DataScopeInfo {
-	d.UserField = field
-	return d
-}
+	// 聚合所有角色的权限
+	permissionMap := rbacCache.GetAggregatedPermissions(roleIDs)
 
-// ToSSQL 转换为SSQL表达式
-func (d *DataScopeInfo) ToSSQL() string {
-	builder := ssql.NewBuilder()
-
-	switch d.Type {
-	case DataScopeAll:
-		// 全部数据,不添加任何条件
-		return ""
-	case DataScopeSelf:
-		// 仅本人数据
-		builder.Eq(d.UserField, d.UserID)
+	// 筛选匹配资源的权限
+	permissionIDs := make([]int64, 0)
+	for _, perm := range permissionMap {
+		if matchResource(perm.Resource, resource) {
+			permissionIDs = append(permissionIDs, perm.ID)
+		}
 	}
 
-	return builder.String()
-}
-
-// ToSQL 转换为SQL条件
-func (d *DataScopeInfo) ToSQL(dialect ssql.Dialect) (string, []interface{}) {
-	switch d.Type {
-	case DataScopeAll:
-		return "", nil
-	case DataScopeSelf:
-		return fmt.Sprintf("%s = ?", dialect.Quote(d.UserField)), []interface{}{d.UserID}
-	default:
-		return "", nil
+	if len(permissionIDs) == 0 {
+		logger.Warn("未找到匹配的权限", zap.String("resource", resource), zap.Int64("roleID", roleID))
+		return ssql.NewBuilder().Eq("1", 0), nil
 	}
+	logger.Debug("匹配权限", zap.Int64s("permissionIDs", permissionIDs), zap.String("tableName", tableName))
+
+	// 获取匹配的数据范围规则
+	permissionScopes := rbacCache.GetPermissionScopes(permissionIDs, tableName)
+
+	// 构建SSQL
+	builder := ssql.NewBuilder().Or()
+	hasRule := false
+
+	for _, scope := range permissionScopes {
+		if scope.SSQLRule == "" {
+			continue
+		}
+		expr, err := ssql.Parse(scope.SSQLRule)
+		if err != nil {
+			logger.Error("解析SSQL规则失败", zap.Error(err), zap.String("rule", scope.SSQLRule), zap.Int64("scopeID", scope.ID))
+			continue
+		}
+		builder.Expr(expr)
+		hasRule = true
+		logger.Debug("添加数据范围规则", zap.String("scopeName", scope.Name), zap.String("rule", scope.SSQLRule))
+	}
+
+	if !hasRule {
+		logger.Debug("未找到数据范围规则，允许访问所有数据", zap.String("tableName", tableName), zap.Int64s("permissionIDs", permissionIDs))
+		return ssql.NewBuilder(), nil
+	}
+
+	return builder, nil
 }
 
-// DataScopeService 数据权限服务
-type DataScopeService struct{}
-
-// NewDataScopeService 创建数据权限服务
-func NewDataScopeService() *DataScopeService {
-	return &DataScopeService{}
+// matchResource 匹配资源路径（支持通配符*）
+func matchResource(pattern, resource string) bool {
+	if pattern == resource {
+		return true
+	}
+	if len(pattern) > 0 && pattern[len(pattern)-1] == '*' {
+		prefix := pattern[:len(pattern)-1]
+		return len(resource) >= len(prefix) && resource[:len(prefix)] == prefix
+	}
+	return false
 }
 
-// GetDataScopeInfo 获取数据权限信息
-func (s *DataScopeService) GetDataScopeInfo(scopeType DataScopeType, userID int64) *DataScopeInfo {
-	return NewDataScopeInfo(scopeType, userID)
-}
+// GetUserPermissions 获取用户的所有权限（聚合角色树，过滤禁用角色）
+func GetUserPermissions(rbacCache *lifecycle.RBACCache, roleID int64) ([]lifecycle.Permission, error) {
+	roleIDs, err := rbacCache.GetRoleAndDescendantIDs(roleID)
+	if err != nil {
+		return nil, err
+	}
 
-// BuildSQLCondition 构建SQL条件
-func (s *DataScopeService) BuildSQLCondition(scopeType DataScopeType, userID int64) (string, []interface{}) {
-	info := s.GetDataScopeInfo(scopeType, userID)
-	sql, args := info.ToSQL(ssql.NewMySQLDialect())
-	return sql, args
+	permissionMap := rbacCache.GetAggregatedPermissions(roleIDs)
+
+	permissions := make([]lifecycle.Permission, 0, len(permissionMap))
+	for _, perm := range permissionMap {
+		permissions = append(permissions, perm)
+	}
+	return permissions, nil
 }

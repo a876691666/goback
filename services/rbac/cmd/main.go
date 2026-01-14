@@ -25,7 +25,7 @@ import (
 
 const (
 	serviceName = "rbac-service"
-	servicePort = 8082
+	servicePort = 28082
 	basePath    = "rbac"
 )
 
@@ -40,12 +40,6 @@ func main() {
 	// 初始化日志
 	logger.Init(&cfg.Log)
 	defer logger.Sync()
-
-	// 初始化Redis（生命周期系统依赖）
-	if err := database.InitRedis(&cfg.Redis); err != nil {
-		logger.Fatal("初始化Redis失败", zap.Error(err))
-	}
-	defer database.CloseRedis()
 
 	// 初始化数据库
 	if err := database.Init(&cfg.Database); err != nil {
@@ -88,7 +82,7 @@ func main() {
 		WithRegistry(reg).
 		WithService(svcInfo).
 		WithApp(app).
-		OnStart(func(ctx *lifecycle.ServiceContext) error {
+		OnStart(func(s *lifecycle.Service) error {
 			// 数据库迁移
 			db := database.Get()
 			if err := db.AutoMigrate(
@@ -110,14 +104,13 @@ func main() {
 			jwtManager := auth.NewJWTManager(&cfg.JWT)
 			jwtMiddleware := middleware.JWTAuth(jwtManager)
 
-			// 创建控制器（传入ServiceContext）
-			baseCtrl := router.NewBaseController(ctx)
+			// 创建控制器（传入Service）
+			baseCtrl := router.NewBaseController(s)
 			permCtrl := &permission.Controller{BaseController: baseCtrl}
 			permScopeCtrl := &permissionscope.Controller{BaseController: baseCtrl}
 			roleCtrl := &role.Controller{
 				BaseController: baseCtrl,
 				PermCtrl:       permCtrl,
-				CasbinService:  auth.NewCasbinService(),
 			}
 
 			middlewares := map[string]fiber.Handler{
@@ -128,28 +121,24 @@ func main() {
 
 			return nil
 		}).
-		OnReady(func(ctx *lifecycle.ServiceContext) error {
-			// 广播所有RBAC数据
-			role.BroadcastAll(ctx)
-			logger.Info("RBAC服务就绪，已广播权限数据", zap.String("addr", addr))
+		OnReady(func(s *lifecycle.Service) error {
+			logger.Info("RBAC服务就绪", zap.String("addr", addr))
 			return nil
 		}).
-		OnStop(func(ctx *lifecycle.ServiceContext) error {
+		OnStop(func(s *lifecycle.Service) error {
 			logger.Info("RBAC服务正在清理资源...")
 			return nil
 		}).
 		Build()
 
-	// 监听其他服务上线，主动推送权限
+	// 监听其他服务上线
 	svc.Lifecycle().OnEvent(lifecycle.EventReady, func(msg *lifecycle.LifecycleMessage) {
 		if msg.Service == serviceName {
 			return
 		}
-		logger.Info("检测到新服务就绪，推送权限数据",
+		logger.Info("检测到新服务就绪",
 			zap.String("service", msg.Service),
 		)
-		// 重新广播权限给新上线的服务
-		go role.BroadcastAll(svc.Context())
 	})
 
 	// 运行服务

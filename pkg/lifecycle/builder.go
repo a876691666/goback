@@ -9,9 +9,9 @@ import (
 type Builder struct {
 	opts    *ServiceOptions
 	app     *fiber.App
-	onStart []func(*ServiceContext) error
-	onReady []func(*ServiceContext) error
-	onStop  []func(*ServiceContext) error
+	onStart []Hook
+	onReady []Hook
+	onStop  []Hook
 }
 
 // NewBuilder 创建服务构建器
@@ -21,9 +21,9 @@ func NewBuilder(name string) *Builder {
 			Name:   name,
 			NodeID: name + "-1",
 		},
-		onStart: make([]func(*ServiceContext) error, 0),
-		onReady: make([]func(*ServiceContext) error, 0),
-		onStop:  make([]func(*ServiceContext) error, 0),
+		onStart: make([]Hook, 0),
+		onReady: make([]Hook, 0),
+		onStop:  make([]Hook, 0),
 	}
 }
 
@@ -58,25 +58,44 @@ func (b *Builder) WithApp(app *fiber.App) *Builder {
 }
 
 // OnStart 添加启动钩子
-func (b *Builder) OnStart(fn func(*ServiceContext) error) *Builder {
+func (b *Builder) OnStart(fn Hook) *Builder {
 	b.onStart = append(b.onStart, fn)
 	return b
 }
 
 // OnReady 添加就绪钩子
-func (b *Builder) OnReady(fn func(*ServiceContext) error) *Builder {
+func (b *Builder) OnReady(fn Hook) *Builder {
 	b.onReady = append(b.onReady, fn)
 	return b
 }
 
 // OnStop 添加停止钩子
-func (b *Builder) OnStop(fn func(*ServiceContext) error) *Builder {
+func (b *Builder) OnStop(fn Hook) *Builder {
 	b.onStop = append(b.onStop, fn)
 	return b
 }
 
 // Build 构建服务
 func (b *Builder) Build() *Service {
+	// 如果没有设置注册中心，创建默认的mDNS注册中心
+	if b.opts.Registry == nil {
+		b.opts.Registry = registry.NewMDNSRegistry()
+	}
+
+	// 如果没有设置服务注册信息，自动创建
+	if b.opts.Service == nil && b.opts.Name != "" && b.opts.Address != "" {
+		b.opts.Service = &registry.Service{
+			Name:    b.opts.Name,
+			Version: "1.0.0",
+			Nodes: []*registry.Node{
+				{
+					Id:      b.opts.NodeID,
+					Address: b.opts.Address,
+				},
+			},
+		}
+	}
+
 	svc := NewService(b.opts)
 
 	if b.app != nil {

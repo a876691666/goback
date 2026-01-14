@@ -1,10 +1,8 @@
 package role
 
 import (
-	"github.com/goback/pkg/auth"
 	"github.com/goback/pkg/dal"
 	"github.com/goback/pkg/errors"
-	"github.com/goback/pkg/lifecycle"
 	"github.com/goback/pkg/response"
 	"github.com/goback/pkg/router"
 	"github.com/goback/services/rbac/internal/model"
@@ -15,8 +13,7 @@ import (
 // Controller 角色控制器
 type Controller struct {
 	router.BaseController
-	PermCtrl      *permission.Controller
-	CasbinService *auth.CasbinService
+	PermCtrl *permission.Controller
 }
 
 // Prefix 返回路由前缀
@@ -50,8 +47,6 @@ func (c *Controller) create(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-	// 广播角色变更
-	c.broadcastRoles()
 	return response.Success(ctx, role)
 }
 
@@ -105,8 +100,7 @@ func (c *Controller) update(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-	// 广播角色变更
-	c.broadcastRoles()
+
 	return response.Success(ctx, role)
 }
 
@@ -177,8 +171,7 @@ func (c *Controller) delete(ctx *fiber.Ctx) error {
 	}
 	// 刷新缓存
 	model.RoleTreeCache.Refresh()
-	// 广播角色变更
-	c.broadcastRoles()
+
 	return response.Success(ctx, nil)
 }
 
@@ -271,8 +264,7 @@ func (c *Controller) setPermissions(ctx *fiber.Ctx) error {
 	if err := c.doSetPermissions(id, req.PermissionIDs); err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-	// 广播角色权限变更
-	c.broadcastRolePermissions()
+
 	return response.Success(ctx, nil)
 }
 
@@ -284,18 +276,7 @@ func (c *Controller) doSetPermissions(roleID int64, permissionIDs []int64) error
 	if role == nil {
 		return errors.NotFound("角色")
 	}
-	if err := c.PermCtrl.SetRolePermissions(roleID, permissionIDs); err != nil {
-		return err
-	}
-	permissions, err := c.PermCtrl.GetByRoleID(roleID)
-	if err != nil {
-		return err
-	}
-	casbinPerms := make([]auth.Permission, len(permissions))
-	for i, p := range permissions {
-		casbinPerms[i] = auth.Permission{Resource: p.Resource, Action: p.Action}
-	}
-	return c.CasbinService.SetRolePermissions(role.Code, casbinPerms)
+	return c.PermCtrl.SetRolePermissions(roleID, permissionIDs)
 }
 
 func (c *Controller) refreshCache(ctx *fiber.Ctx) error {
@@ -313,61 +294,4 @@ func (c *Controller) GetByID(id int64) (*model.Role, error) {
 // GetRoleAndDescendantIDs 获取角色及其所有后代ID（供其他服务调用）
 func (c *Controller) GetRoleAndDescendantIDs(roleID int64) ([]int64, error) {
 	return model.RoleTreeCache.GetRoleAndDescendantIDs(roleID)
-}
-
-// broadcastRoles 广播角色数据
-func (c *Controller) broadcastRoles() {
-	go func() {
-		roles := LoadRoles()
-		c.Broadcast(lifecycle.ModuleRBAC, lifecycle.KeyRoles, roles)
-	}()
-}
-
-// broadcastRolePermissions 广播角色权限映射
-func (c *Controller) broadcastRolePermissions() {
-	go func() {
-		rolePerms := permission.LoadRolePermissions()
-		c.Broadcast(lifecycle.ModuleRBAC, lifecycle.KeyRolePermissions, rolePerms)
-	}()
-}
-
-// LoadRoles 加载所有角色（导出供其他模块使用）
-func LoadRoles() []lifecycle.Role {
-	var roles []model.Role
-	if err := model.Roles.DB().Find(&roles).Error; err != nil {
-		return nil
-	}
-
-	result := make([]lifecycle.Role, len(roles))
-	for i, r := range roles {
-		// 获取角色关联的权限ID
-		var rolePerms []model.RolePermission
-		model.RolePermissions.DB().Where("role_id = ?", r.ID).Find(&rolePerms)
-		permIDs := make([]int64, len(rolePerms))
-		for j, rp := range rolePerms {
-			permIDs[j] = rp.PermissionID
-		}
-		result[i] = lifecycle.Role{
-			ID:          r.ID,
-			Code:        r.Code,
-			Name:        r.Name,
-			Permissions: permIDs,
-		}
-	}
-	return result
-}
-
-// BroadcastAll 广播所有RBAC数据（供服务启动时调用）
-func BroadcastAll(ctx *lifecycle.ServiceContext) {
-	// 广播权限
-	permissions := permission.LoadPermissions()
-	ctx.Broadcast(lifecycle.ModuleRBAC, lifecycle.KeyPermissions, permissions)
-
-	// 广播角色
-	roles := LoadRoles()
-	ctx.Broadcast(lifecycle.ModuleRBAC, lifecycle.KeyRoles, roles)
-
-	// 广播角色权限映射
-	rolePerms := permission.LoadRolePermissions()
-	ctx.Broadcast(lifecycle.ModuleRBAC, lifecycle.KeyRolePermissions, rolePerms)
 }

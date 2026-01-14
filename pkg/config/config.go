@@ -22,7 +22,6 @@ type Config struct {
 	Redis    RedisConfig    `mapstructure:"redis"`
 	Etcd     EtcdConfig     `mapstructure:"etcd"`
 	JWT      JWTConfig      `mapstructure:"jwt"`
-	Casbin   CasbinConfig   `mapstructure:"casbin"`
 	Log      LogConfig      `mapstructure:"log"`
 }
 
@@ -116,11 +115,6 @@ type JWTConfig struct {
 	Expire int64  `mapstructure:"expire"`
 }
 
-// CasbinConfig Casbin配置
-type CasbinConfig struct {
-	ModelPath string `mapstructure:"modelPath"`
-}
-
 // LogConfig 日志配置
 type LogConfig struct {
 	Level      string `mapstructure:"level"`
@@ -200,8 +194,6 @@ func resolveEnvVars(cfg *Config) {
 	cfg.Database.Username = resolveEnvVar(cfg.Database.Username)
 	cfg.Database.Password = resolveEnvVar(cfg.Database.Password)
 	cfg.Database.Database = resolveEnvVar(cfg.Database.Database)
-	cfg.Redis.Host = resolveEnvVar(cfg.Redis.Host)
-	cfg.Redis.Password = resolveEnvVar(cfg.Redis.Password)
 	cfg.JWT.Secret = resolveEnvVar(cfg.JWT.Secret)
 }
 

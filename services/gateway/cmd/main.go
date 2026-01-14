@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/goback/pkg/config"
-	"github.com/goback/pkg/database"
 	"github.com/goback/pkg/lifecycle"
 	"github.com/goback/pkg/logger"
 	"github.com/goback/pkg/middleware"
@@ -32,12 +31,6 @@ func main() {
 	// 初始化日志
 	logger.Init(&cfg.Log)
 	defer logger.Sync()
-
-	// 初始化Redis（生命周期系统依赖）
-	if err := database.InitRedis(&cfg.Redis); err != nil {
-		logger.Fatal("初始化Redis失败", zap.Error(err))
-	}
-	defer database.CloseRedis()
 
 	// 服务地址
 	addr := fmt.Sprintf("%s:%d", cfg.Server.HTTP.Host, cfg.Server.HTTP.Port)
@@ -83,7 +76,7 @@ func main() {
 		WithNodeID(serviceName + "-1").
 		WithAddress(addr).
 		WithApp(app).
-		OnStart(func(ctx *lifecycle.ServiceContext) error {
+		OnStart(func(s *lifecycle.Service) error {
 			// 同步已有服务的路由
 			if err := gw.SyncRoutes(); err != nil {
 				logger.Warn("同步服务路由失败", zap.Error(err))
@@ -96,21 +89,11 @@ func main() {
 
 			return nil
 		}).
-		OnReady(func(ctx *lifecycle.ServiceContext) error {
-			// 订阅RBAC权限更新（网关可用于鉴权）
-			cache := ctx.Cache()
-			cache.Subscribe("rbac-service", lifecycle.ModuleRBAC, func(msg *lifecycle.CacheMessage) {
-				logger.Info("收到RBAC缓存更新",
-					zap.String("key", msg.Key),
-					zap.String("action", msg.Action),
-				)
-				// 网关可以在这里更新权限缓存用于请求鉴权
-			})
-
+		OnReady(func(s *lifecycle.Service) error {
 			logger.Info("网关服务就绪", zap.String("addr", addr))
 			return nil
 		}).
-		OnStop(func(ctx *lifecycle.ServiceContext) error {
+		OnStop(func(s *lifecycle.Service) error {
 			ctx2, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 

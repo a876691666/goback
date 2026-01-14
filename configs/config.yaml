@@ -20,21 +20,14 @@ database:
   maxOpenConns: 100
   logLevel: info
 
-redis:
-  mode: memory  # "memory" 内存模式(无需外部Redis), "standalone" 需要外部Redis服务
-  host: localhost
-  port: 6379
-  password: ""
-  db: 0
-  poolSize: 100
+# 广播配置（基于UDP组播，无需外部依赖）
+broadcast:
+  multicastAddr: "239.255.255.250:9999"  # UDP组播地址
 
 jwt:
   secret: goback-secret-key-change-in-production
   issuer: goback
   expire: 7200
-
-casbin:
-  modelPath: configs/rbac_model.conf
 
 log:
   level: debug

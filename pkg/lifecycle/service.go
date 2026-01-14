@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/goback/pkg/broadcast"
 	"github.com/goback/pkg/logger"
 	"github.com/gofiber/fiber/v2"
 	"go-micro.dev/v5/registry"
@@ -23,33 +24,36 @@ type ServiceOptions struct {
 	Service  *registry.Service // 服务注册信息
 }
 
+// Hook 钩子函数类型
+type Hook func(*Service) error
+
 // Service 微服务包装器
 type Service struct {
 	opts      *ServiceOptions
 	app       *fiber.App
 	lifecycle *Manager
-	cache     *CacheBroadcaster
-	ctx       *ServiceContext // 服务上下文
 
 	// 钩子函数
-	onStart []func(*ServiceContext) error
-	onReady []func(*ServiceContext) error
-	onStop  []func(*ServiceContext) error
+	onStart []Hook
+	onReady []Hook
+	onStop  []Hook
 }
 
 // NewService 创建微服务
 func NewService(opts *ServiceOptions) *Service {
-	s := &Service{
-		opts:      opts,
-		lifecycle: NewManager(opts.Name, opts.NodeID),
-		cache:     NewCacheBroadcaster(opts.Name),
-		onStart:   make([]func(*ServiceContext) error, 0),
-		onReady:   make([]func(*ServiceContext) error, 0),
-		onStop:    make([]func(*ServiceContext) error, 0),
+	// 确保有注册中心
+	reg := opts.Registry
+	if reg == nil {
+		reg = registry.NewMDNSRegistry()
 	}
-	// 创建服务上下文
-	s.ctx = newServiceContext(s)
-	return s
+
+	return &Service{
+		opts:      opts,
+		lifecycle: NewManager(opts.Name, opts.NodeID, reg),
+		onStart:   make([]Hook, 0),
+		onReady:   make([]Hook, 0),
+		onStop:    make([]Hook, 0),
+	}
 }
 
 // SetApp 设置Fiber应用
@@ -62,41 +66,34 @@ func (s *Service) Lifecycle() *Manager {
 	return s.lifecycle
 }
 
-// Cache 获取缓存广播器
-func (s *Service) Cache() *CacheBroadcaster {
-	return s.cache
-}
-
-// Context 获取服务上下文
-func (s *Service) Context() *ServiceContext {
-	return s.ctx
-}
-
 // OnStart 注册启动钩子
-func (s *Service) OnStart(fn func(*ServiceContext) error) {
+func (s *Service) OnStart(fn Hook) {
 	s.onStart = append(s.onStart, fn)
 }
 
 // OnReady 注册就绪钩子
-func (s *Service) OnReady(fn func(*ServiceContext) error) {
+func (s *Service) OnReady(fn Hook) {
 	s.onReady = append(s.onReady, fn)
 }
 
 // OnStop 注册停止钩子
-func (s *Service) OnStop(fn func(*ServiceContext) error) {
+func (s *Service) OnStop(fn Hook) {
 	s.onStop = append(s.onStop, fn)
+}
+
+// EmitEvent 发送生命周期事件
+func (s *Service) EmitEvent(event Event, metadata any) error {
+	return s.lifecycle.Emit(event, metadata)
 }
 
 // Run 运行服务
 func (s *Service) Run() error {
+	// 挂载广播接收路由
+	s.mountBroadcastRoutes()
+
 	// 启动生命周期监听
 	if err := s.lifecycle.Start(); err != nil {
 		return fmt.Errorf("start lifecycle manager: %w", err)
-	}
-
-	// 启动缓存广播监听
-	if err := s.cache.Start(); err != nil {
-		return fmt.Errorf("start cache broadcaster: %w", err)
 	}
 
 	// 发布启动中事件
@@ -104,7 +101,7 @@ func (s *Service) Run() error {
 
 	// 执行启动钩子
 	for _, fn := range s.onStart {
-		if err := fn(s.ctx); err != nil {
+		if err := fn(s); err != nil {
 			return fmt.Errorf("start hook: %w", err)
 		}
 	}
@@ -136,7 +133,7 @@ func (s *Service) Run() error {
 
 	// 执行就绪钩子
 	for _, fn := range s.onReady {
-		if err := fn(s.ctx); err != nil {
+		if err := fn(s); err != nil {
 			return fmt.Errorf("ready hook: %w", err)
 		}
 	}
@@ -169,7 +166,7 @@ func (s *Service) Shutdown() error {
 
 	// 执行停止钩子
 	for _, fn := range s.onStop {
-		if err := fn(s.ctx); err != nil {
+		if err := fn(s); err != nil {
 			logger.Error("停止钩子执行失败", zap.Error(err))
 		}
 	}
@@ -188,11 +185,6 @@ func (s *Service) Shutdown() error {
 		}
 	}
 
-	// 停止缓存广播
-	if err := s.cache.Stop(); err != nil {
-		logger.Error("停止缓存广播失败", zap.Error(err))
-	}
-
 	// 发布已停止事件
 	s.lifecycle.EmitStopped()
 
@@ -203,4 +195,24 @@ func (s *Service) Shutdown() error {
 
 	logger.Info("服务已关闭", zap.String("service", s.opts.Name))
 	return nil
+}
+
+// mountBroadcastRoutes 挂载广播接收路由
+func (s *Service) mountBroadcastRoutes() {
+	if s.app == nil {
+		return
+	}
+
+	// 接收其他节点发来的广播消息
+	s.app.Post("/_broadcast", func(c *fiber.Ctx) error {
+		var msg broadcast.Message
+		if err := c.BodyParser(&msg); err != nil {
+			return c.SendStatus(fiber.StatusBadRequest)
+		}
+
+		// 分发到对应的处理器
+		s.lifecycle.HandleBroadcast(&msg)
+
+		return c.SendStatus(fiber.StatusOK)
+	})
 }

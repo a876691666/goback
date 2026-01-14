@@ -1,3 +1,5 @@
 logs
 data
 bin
+__debug_bin.exe
+*.tar

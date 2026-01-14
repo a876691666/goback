@@ -14,12 +14,9 @@ const (
 
 // 缓存键常量定义
 const (
-	// KeyPermissions 权限列表缓存键
-	KeyPermissions = "permissions"
-	// KeyRoles 角色列表缓存键
-	KeyRoles = "roles"
-	// KeyRolePermissions 角色权限映射缓存键
-	KeyRolePermissions = "role_permissions"
+	// KeyRBACData 完整RBAC数据缓存键（统一广播）
+	// 包含: Permissions, Roles, RolePermissions, PermissionScopes
+	KeyRBACData = "rbac_data"
 	// KeyUserRoles 用户角色映射缓存键
 	KeyUserRoles = "user_roles"
 	// KeyMenuTree 菜单树缓存键
@@ -40,9 +37,10 @@ type Permission struct {
 // Role 角色信息（用于缓存传输）
 type Role struct {
 	ID          int64   `json:"id"`
+	ParentID    int64   `json:"parentId"`
 	Code        string  `json:"code"`
 	Name        string  `json:"name"`
-	Permissions []int64 `json:"permissions"` // 权限ID列表
+	Status      int8    `json:"status"` // 1:正常 0:禁用
 }
 
 // RolePermissionMap 角色权限映射
@@ -50,3 +48,21 @@ type RolePermissionMap map[int64][]Permission // roleID -> permissions
 
 // UserRoleMap 用户角色映射
 type UserRoleMap map[int64][]int64 // userID -> roleIDs
+
+// PermissionScope 权限数据范围（用于缓存传输）
+type PermissionScope struct {
+	ID             int64  `json:"id"`
+	PermissionID   int64  `json:"permissionId"`
+	Name           string `json:"name"`
+	ScopeTableName string `json:"tableName"`
+	SSQLRule       string `json:"ssqlRule"`
+	Description    string `json:"description"`
+}
+
+// RBACData 完整的RBAC数据（用于一次性广播）
+type RBACData struct {
+	Permissions      []Permission      `json:"permissions"`
+	Roles            []Role            `json:"roles"`
+	RolePermissions  RolePermissionMap `json:"rolePermissions"`
+	PermissionScopes []PermissionScope `json:"permissionScopes"`
+}

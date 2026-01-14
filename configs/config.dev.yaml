@@ -33,9 +33,6 @@ jwt:
   issuer: goback
   expire: 7200
 
-casbin:
-  modelPath: configs/rbac_model.conf
-
 log:
   level: debug
   format: json

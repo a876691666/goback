@@ -3,13 +3,12 @@ package lifecycle
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"sync"
 	"time"
 
-	"github.com/goback/pkg/database"
+	"github.com/goback/pkg/broadcast"
 	"github.com/goback/pkg/logger"
-	"github.com/redis/go-redis/v9"
+	"go-micro.dev/v5/registry"
 	"go.uber.org/zap"
 )
 
@@ -17,54 +16,58 @@ import (
 type Event string
 
 const (
-	EventStarting  Event = "starting"   // 服务启动中
-	EventStarted   Event = "started"    // 服务已启动
-	EventReady     Event = "ready"      // 服务就绪（可接收请求）
-	EventStopping  Event = "stopping"   // 服务停止中
-	EventStopped   Event = "stopped"    // 服务已停止
-	EventHealthy   Event = "healthy"    // 健康检查通过
-	EventUnhealthy Event = "unhealthy"  // 健康检查失败
+	EventStarting  Event = "starting"  // 服务启动中
+	EventStarted   Event = "started"   // 服务已启动
+	EventReady     Event = "ready"     // 服务就绪（可接收请求）
+	EventStopping  Event = "stopping"  // 服务停止中
+	EventStopped   Event = "stopped"   // 服务已停止
+	EventHealthy   Event = "healthy"   // 健康检查通过
+	EventUnhealthy Event = "unhealthy" // 健康检查失败
 )
 
 // LifecycleMessage 生命周期消息
 type LifecycleMessage struct {
-	Service   string    `json:"service"`    // 服务名称
-	NodeID    string    `json:"node_id"`    // 节点ID
-	Event     Event     `json:"event"`      // 事件类型
-	Timestamp time.Time `json:"timestamp"`  // 时间戳
-	Metadata  any       `json:"metadata"`   // 附加元数据
+	Service   string    `json:"service"`   // 服务名称
+	NodeID    string    `json:"node_id"`   // 节点ID
+	Event     Event     `json:"event"`     // 事件类型
+	Timestamp time.Time `json:"timestamp"` // 时间戳
+	Metadata  any       `json:"metadata"`  // 附加元数据
 }
 
 // LifecycleHandler 生命周期事件处理器
 type LifecycleHandler func(msg *LifecycleMessage)
 
+const lifecycleTopic = "service:lifecycle"
+
 // Manager 生命周期管理器
 type Manager struct {
-	service   string
-	nodeID    string
-	redis     *redis.Client
-	handlers  map[Event][]LifecycleHandler
+	service     string
+	nodeID      string
+	broadcaster *broadcast.Broadcaster
+	handlers    map[Event][]LifecycleHandler
 	allHandlers []LifecycleHandler // 监听所有事件的处理器
-	mu        sync.RWMutex
-	ctx       context.Context
-	cancel    context.CancelFunc
-	pubsub    *redis.PubSub
+	mu          sync.RWMutex
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
-const lifecycleChannel = "service:lifecycle"
-
 // NewManager 创建生命周期管理器
-func NewManager(service, nodeID string) *Manager {
+func NewManager(service, nodeID string, reg registry.Registry) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
 		service:     service,
 		nodeID:      nodeID,
-		redis:       database.GetRedis(),
+		broadcaster: broadcast.New(service, nodeID, reg),
 		handlers:    make(map[Event][]LifecycleHandler),
 		allHandlers: make([]LifecycleHandler, 0),
 		ctx:         ctx,
 		cancel:      cancel,
 	}
+}
+
+// Broadcaster 获取广播器
+func (m *Manager) Broadcaster() *broadcast.Broadcaster {
+	return m.broadcaster
 }
 
 // OnEvent 监听特定生命周期事件
@@ -91,25 +94,20 @@ func (m *Manager) Emit(event Event, metadata any) error {
 		Metadata:  metadata,
 	}
 
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("marshal lifecycle message: %w", err)
-	}
-
-	return m.redis.Publish(m.ctx, lifecycleChannel, data).Err()
+	return m.broadcaster.PublishJSON(m.ctx, lifecycleTopic, msg)
 }
 
 // Start 启动生命周期监听
 func (m *Manager) Start() error {
-	m.pubsub = m.redis.Subscribe(m.ctx, lifecycleChannel)
+	// 订阅生命周期消息（本地订阅）
+	m.broadcaster.Subscribe(lifecycleTopic, func(msg *broadcast.Message) {
+		m.handleMessage(msg.Payload)
+	})
 
-	// 等待订阅确认
-	_, err := m.pubsub.Receive(m.ctx)
-	if err != nil {
-		return fmt.Errorf("subscribe lifecycle channel: %w", err)
+	// 启动广播器
+	if err := m.broadcaster.Start(); err != nil {
+		return err
 	}
-
-	go m.listen()
 
 	logger.Info("生命周期管理器已启动",
 		zap.String("service", m.service),
@@ -119,27 +117,17 @@ func (m *Manager) Start() error {
 	return nil
 }
 
-// listen 监听生命周期消息
-func (m *Manager) listen() {
-	ch := m.pubsub.Channel()
-
-	for {
-		select {
-		case <-m.ctx.Done():
-			return
-		case msg, ok := <-ch:
-			if !ok {
-				return
-			}
-			m.handleMessage(msg.Payload)
-		}
+// HandleBroadcast 处理来自HTTP的广播消息
+func (m *Manager) HandleBroadcast(msg *broadcast.Message) {
+	if msg.Topic == lifecycleTopic {
+		m.handleMessage(msg.Payload)
 	}
 }
 
 // handleMessage 处理生命周期消息
-func (m *Manager) handleMessage(payload string) {
+func (m *Manager) handleMessage(payload []byte) {
 	var msg LifecycleMessage
-	if err := json.Unmarshal([]byte(payload), &msg); err != nil {
+	if err := json.Unmarshal(payload, &msg); err != nil {
 		logger.Error("解析生命周期消息失败", zap.Error(err))
 		return
 	}
@@ -163,10 +151,7 @@ func (m *Manager) handleMessage(payload string) {
 // Stop 停止生命周期监听
 func (m *Manager) Stop() error {
 	m.cancel()
-	if m.pubsub != nil {
-		return m.pubsub.Close()
-	}
-	return nil
+	return m.broadcaster.Stop()
 }
 
 // EmitStarting 发布启动中事件

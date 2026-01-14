@@ -39,12 +39,6 @@ func main() {
 	logger.Init(&cfg.Log)
 	defer logger.Sync()
 
-	// 初始化Redis（生命周期系统依赖）
-	if err := database.InitRedis(&cfg.Redis); err != nil {
-		logger.Fatal("初始化Redis失败", zap.Error(err))
-	}
-	defer database.CloseRedis()
-
 	// 初始化数据库
 	if err := database.Init(&cfg.Database); err != nil {
 		logger.Fatal("初始化数据库失败", zap.Error(err))
@@ -89,7 +83,7 @@ func main() {
 		WithRegistry(reg).
 		WithService(svcInfo).
 		WithApp(app).
-		OnStart(func(ctx *lifecycle.ServiceContext) error {
+		OnStart(func(s *lifecycle.Service) error {
 			// 数据库迁移
 			db := database.Get()
 			if err := db.AutoMigrate(&model.Menu{}, &model.RoleMenu{}, &model.PermissionMenu{}); err != nil {
@@ -101,8 +95,8 @@ func main() {
 			jwtManager := auth.NewJWTManager(&cfg.JWT)
 			jwtMiddleware := middleware.JWTAuth(jwtManager)
 
-			// 创建控制器（传入ServiceContext）
-			baseCtrl := router.NewBaseController(ctx)
+			// 创建控制器（传入Service）
+			baseCtrl := router.NewBaseController(s)
 			menuCtrl := &menu.Controller{BaseController: baseCtrl}
 
 			middlewares := map[string]fiber.Handler{
@@ -113,20 +107,11 @@ func main() {
 
 			return nil
 		}).
-		OnReady(func(ctx *lifecycle.ServiceContext) error {
-			// 订阅RBAC权限更新
-			cache := ctx.Cache()
-			cache.Subscribe("rbac-service", lifecycle.ModuleRBAC, func(msg *lifecycle.CacheMessage) {
-				logger.Info("收到RBAC缓存更新",
-					zap.String("key", msg.Key),
-					zap.String("action", msg.Action),
-				)
-			})
-
+		OnReady(func(s *lifecycle.Service) error {
 			logger.Info("菜单服务就绪", zap.String("addr", addr))
 			return nil
 		}).
-		OnStop(func(ctx *lifecycle.ServiceContext) error {
+		OnStop(func(s *lifecycle.Service) error {
 			logger.Info("菜单服务正在清理资源...")
 			return nil
 		}).
