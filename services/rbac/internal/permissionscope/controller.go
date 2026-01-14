@@ -3,8 +3,10 @@ package permissionscope
 import (
 	"github.com/goback/pkg/dal"
 	"github.com/goback/pkg/errors"
+	"github.com/goback/pkg/lifecycle"
 	"github.com/goback/pkg/response"
 	"github.com/goback/pkg/router"
+	"github.com/goback/services/rbac/internal/common"
 	"github.com/goback/services/rbac/internal/model"
 	"github.com/gofiber/fiber/v2"
 )
@@ -40,6 +42,7 @@ func (c *Controller) create(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
+	c.Service().Broadcaster().SendJSON(lifecycle.KeyRBACData, common.LoadRBACData(), "")
 	return response.Success(ctx, scope)
 }
 
@@ -78,6 +81,7 @@ func (c *Controller) update(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
+	c.Service().Broadcaster().SendJSON(lifecycle.KeyRBACData, common.LoadRBACData(), "")
 	return response.Success(ctx, scope)
 }
 
@@ -115,6 +119,7 @@ func (c *Controller) delete(ctx *fiber.Ctx) error {
 	if err := model.PermissionScopes.DeleteByID(id); err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
+	c.Service().Broadcaster().SendJSON(lifecycle.KeyRBACData, common.LoadRBACData(), "")
 	return response.Success(ctx, nil)
 }
 

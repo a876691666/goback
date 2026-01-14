@@ -1,10 +1,11 @@
 package lifecycle
 
 import (
-	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -15,89 +16,201 @@ import (
 	"go.uber.org/zap"
 )
 
-// ServiceOptions 服务配置选项
-type ServiceOptions struct {
-	Name     string            // 服务名称
-	NodeID   string            // 节点ID
-	Address  string            // 服务地址
-	Registry registry.Registry // 服务注册中心
-	Service  *registry.Service // 服务注册信息
+// Event 生命周期事件类型
+type Event string
+
+const (
+	EventStarting  Event = "starting"
+	EventStarted   Event = "started"
+	EventReady     Event = "ready"
+	EventStopping  Event = "stopping"
+	EventStopped   Event = "stopped"
+	EventHealthy   Event = "healthy"
+	EventUnhealthy Event = "unhealthy"
+)
+
+const lifecycleTopic = "service:lifecycle"
+
+// EventMessage 生命周期事件消息
+type EventMessage struct {
+	Service   string    `json:"service"`
+	NodeID    string    `json:"node_id"`
+	Event     Event     `json:"event"`
+	Timestamp time.Time `json:"timestamp"`
+	Metadata  any       `json:"metadata,omitempty"`
 }
 
-// Hook 钩子函数类型
+// EventHandler 事件处理器
+type EventHandler func(*EventMessage, *Service)
+
+// Hook 钩子函数
 type Hook func(*Service) error
 
-// Service 微服务包装器
+// Service 微服务 - 统一的服务生命周期管理
 type Service struct {
-	opts      *ServiceOptions
-	app       *fiber.App
-	lifecycle *Manager
+	name    string
+	nodeID  string
+	address string
 
-	// 钩子函数
+	app         *fiber.App
+	registry    registry.Registry
+	regService  *registry.Service
+	broadcaster *broadcast.Broadcaster
+
 	onStart []Hook
 	onReady []Hook
 	onStop  []Hook
+
+	rbac *RBACData
+
+	eventHandlers    map[Event][]EventHandler
+	allEventHandlers []EventHandler
+	mu               sync.RWMutex
 }
 
-// NewService 创建微服务
-func NewService(opts *ServiceOptions) *Service {
-	// 确保有注册中心
-	reg := opts.Registry
-	if reg == nil {
-		reg = registry.NewMDNSRegistry()
-	}
-
+// New 创建服务
+func New(name string) *Service {
 	return &Service{
-		opts:      opts,
-		lifecycle: NewManager(opts.Name, opts.NodeID, reg),
-		onStart:   make([]Hook, 0),
-		onReady:   make([]Hook, 0),
-		onStop:    make([]Hook, 0),
+		name:             name,
+		nodeID:           name + "-1",
+		eventHandlers:    make(map[Event][]EventHandler),
+		allEventHandlers: make([]EventHandler, 0),
 	}
 }
 
-// SetApp 设置Fiber应用
-func (s *Service) SetApp(app *fiber.App) {
+// --- 链式配置方法 ---
+
+// Node 设置节点ID
+func (s *Service) Node(id string) *Service {
+	s.nodeID = id
+	return s
+}
+
+// Addr 设置服务地址
+func (s *Service) Addr(addr string) *Service {
+	s.address = addr
+	return s
+}
+
+// App 设置Fiber应用
+func (s *Service) App(app *fiber.App) *Service {
 	s.app = app
+	return s
 }
 
-// Lifecycle 获取生命周期管理器
-func (s *Service) Lifecycle() *Manager {
-	return s.lifecycle
+// Registry 设置服务注册中心
+func (s *Service) Registry(reg registry.Registry) *Service {
+	s.registry = reg
+	return s
 }
 
-// OnStart 注册启动钩子
-func (s *Service) OnStart(fn Hook) {
+// RegInfo 设置服务注册信息
+func (s *Service) RegInfo(svc *registry.Service) *Service {
+	s.regService = svc
+	return s
+}
+
+// --- 钩子注册 ---
+
+// OnStart 启动时执行
+func (s *Service) OnStart(fn Hook) *Service {
 	s.onStart = append(s.onStart, fn)
+	return s
 }
 
-// OnReady 注册就绪钩子
-func (s *Service) OnReady(fn Hook) {
+// OnReady 就绪时执行
+func (s *Service) OnReady(fn Hook) *Service {
 	s.onReady = append(s.onReady, fn)
+	return s
 }
 
-// OnStop 注册停止钩子
-func (s *Service) OnStop(fn Hook) {
+// OnStop 停止时执行
+func (s *Service) OnStop(fn Hook) *Service {
 	s.onStop = append(s.onStop, fn)
+	return s
 }
 
-// EmitEvent 发送生命周期事件
-func (s *Service) EmitEvent(event Event, metadata any) error {
-	return s.lifecycle.Emit(event, metadata)
+// --- 工具函数 ---
+
+// UseRBAC 使用RBAC功能，订阅RBAC数据更新
+func (s *Service) UseRBAC() *Service {
+	s.OnReady(func(s *Service) error {
+		s.Broadcaster().Subscribe(KeyRBACData, func(msg *broadcast.Message) {
+			var data RBACData
+			if err := json.Unmarshal(msg.Payload, &data); err != nil {
+				logger.Error("解析RBAC数据失败", zap.Error(err))
+				return
+			}
+			s.rbac = &data
+		})
+		return nil
+	})
+	return s
 }
 
-// Run 运行服务
+// --- 事件监听 ---
+
+// On 监听特定事件
+func (s *Service) On(event Event, handler EventHandler) *Service {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.eventHandlers[event] = append(s.eventHandlers[event], handler)
+	return s
+}
+
+// OnAny 监听所有事件
+func (s *Service) OnAny(handler EventHandler) *Service {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.allEventHandlers = append(s.allEventHandlers, handler)
+	return s
+}
+
+// --- 广播能力 ---
+
+// Broadcaster 获取广播器
+func (s *Service) Broadcaster() *broadcast.Broadcaster {
+	return s.broadcaster
+}
+
+// Emit 发布事件
+func (s *Service) Emit(event Event, metadata any) error {
+	if s.broadcaster == nil {
+		return nil
+	}
+	msg := &EventMessage{
+		Service:   s.name,
+		NodeID:    s.nodeID,
+		Event:     event,
+		Timestamp: time.Now(),
+		Metadata:  metadata,
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	return s.broadcaster.Send(lifecycleTopic, data, "")
+}
+
+// --- 核心方法 ---
+
+// Run 启动服务
 func (s *Service) Run() error {
-	// 挂载广播接收路由
-	s.mountBroadcastRoutes()
+	// 初始化注册中心
+	if s.registry == nil {
+		s.registry = registry.NewMDNSRegistry()
+	}
 
-	// 启动生命周期监听
-	if err := s.lifecycle.Start(); err != nil {
-		return fmt.Errorf("start lifecycle manager: %w", err)
+	// 初始化广播器
+	s.broadcaster = broadcast.New(s.name, s.nodeID, s.registry)
+	s.mountBroadcastRoute()
+	s.broadcaster.Subscribe(lifecycleTopic, s.handleBroadcast)
+	if err := s.broadcaster.Start(); err != nil {
+		return fmt.Errorf("start broadcaster: %w", err)
 	}
 
 	// 发布启动中事件
-	s.lifecycle.EmitStarting()
+	s.Emit(EventStarting, nil)
 
 	// 执行启动钩子
 	for _, fn := range s.onStart {
@@ -107,28 +220,24 @@ func (s *Service) Run() error {
 	}
 
 	// 注册服务
-	if s.opts.Registry != nil && s.opts.Service != nil {
-		if err := s.opts.Registry.Register(s.opts.Service); err != nil {
+	if s.registry != nil && s.regService != nil {
+		if err := s.registry.Register(s.regService); err != nil {
 			return fmt.Errorf("register service: %w", err)
 		}
 	}
 
 	// 发布已启动事件
-	s.lifecycle.EmitStarted()
+	s.Emit(EventStarted, nil)
 
 	// 启动HTTP服务
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("服务启动",
-			zap.String("service", s.opts.Name),
-			zap.String("address", s.opts.Address),
-		)
-		if err := s.app.Listen(s.opts.Address); err != nil {
+		logger.Info("服务启动", zap.String("service", s.name), zap.String("address", s.address))
+		if err := s.app.Listen(s.address); err != nil {
 			errCh <- err
 		}
 	}()
 
-	// 等待服务启动
 	time.Sleep(100 * time.Millisecond)
 
 	// 执行就绪钩子
@@ -139,7 +248,7 @@ func (s *Service) Run() error {
 	}
 
 	// 发布就绪事件
-	s.lifecycle.EmitReady()
+	s.Emit(EventReady, nil)
 
 	// 等待退出信号
 	quit := make(chan os.Signal, 1)
@@ -155,14 +264,9 @@ func (s *Service) Run() error {
 	return s.Shutdown()
 }
 
-// Shutdown 优雅关闭服务
+// Shutdown 优雅关闭
 func (s *Service) Shutdown() error {
-	// 发布停止中事件
-	s.lifecycle.EmitStopping()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	_ = ctx
+	s.Emit(EventStopping, nil)
 
 	// 执行停止钩子
 	for _, fn := range s.onStop {
@@ -172,8 +276,8 @@ func (s *Service) Shutdown() error {
 	}
 
 	// 注销服务
-	if s.opts.Registry != nil && s.opts.Service != nil {
-		if err := s.opts.Registry.Deregister(s.opts.Service); err != nil {
+	if s.registry != nil && s.regService != nil {
+		if err := s.registry.Deregister(s.regService); err != nil {
 			logger.Error("注销服务失败", zap.Error(err))
 		}
 	}
@@ -185,34 +289,46 @@ func (s *Service) Shutdown() error {
 		}
 	}
 
-	// 发布已停止事件
-	s.lifecycle.EmitStopped()
+	s.Emit(EventStopped, nil)
 
-	// 停止生命周期监听
-	if err := s.lifecycle.Stop(); err != nil {
-		logger.Error("停止生命周期监听失败", zap.Error(err))
-	}
-
-	logger.Info("服务已关闭", zap.String("service", s.opts.Name))
+	logger.Info("服务已关闭", zap.String("service", s.name))
 	return nil
 }
 
-// mountBroadcastRoutes 挂载广播接收路由
-func (s *Service) mountBroadcastRoutes() {
+// --- 内部方法 ---
+
+func (s *Service) mountBroadcastRoute() {
 	if s.app == nil {
 		return
 	}
-
-	// 接收其他节点发来的广播消息
 	s.app.Post("/_broadcast", func(c *fiber.Ctx) error {
 		var msg broadcast.Message
 		if err := c.BodyParser(&msg); err != nil {
 			return c.SendStatus(fiber.StatusBadRequest)
 		}
-
-		// 分发到对应的处理器
-		s.lifecycle.HandleBroadcast(&msg)
-
+		if msg.Topic == lifecycleTopic {
+			s.handleBroadcast(&msg)
+		}
 		return c.SendStatus(fiber.StatusOK)
 	})
+}
+
+func (s *Service) handleBroadcast(msg *broadcast.Message) {
+	var evt EventMessage
+	if err := json.Unmarshal(msg.Payload, &evt); err != nil {
+		logger.Error("解析事件消息失败", zap.Error(err))
+		return
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if handlers, ok := s.eventHandlers[evt.Event]; ok {
+		for _, h := range handlers {
+			go h(&evt, s)
+		}
+	}
+	for _, h := range s.allEventHandlers {
+		go h(&evt, s)
+	}
 }

@@ -3,8 +3,10 @@ package role
 import (
 	"github.com/goback/pkg/dal"
 	"github.com/goback/pkg/errors"
+	"github.com/goback/pkg/lifecycle"
 	"github.com/goback/pkg/response"
 	"github.com/goback/pkg/router"
+	"github.com/goback/services/rbac/internal/common"
 	"github.com/goback/services/rbac/internal/model"
 	"github.com/goback/services/rbac/internal/permission"
 	"github.com/gofiber/fiber/v2"
@@ -47,6 +49,7 @@ func (c *Controller) create(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
+	c.Service().Broadcaster().SendJSON(lifecycle.KeyRBACData, common.LoadRBACData(), "")
 	return response.Success(ctx, role)
 }
 
@@ -100,7 +103,7 @@ func (c *Controller) update(ctx *fiber.Ctx) error {
 	if err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
+	c.Service().Broadcaster().SendJSON(lifecycle.KeyRBACData, common.LoadRBACData(), "")
 	return response.Success(ctx, role)
 }
 
@@ -171,7 +174,7 @@ func (c *Controller) delete(ctx *fiber.Ctx) error {
 	}
 	// 刷新缓存
 	model.RoleTreeCache.Refresh()
-
+	c.Service().Broadcaster().SendJSON(lifecycle.KeyRBACData, common.LoadRBACData(), "")
 	return response.Success(ctx, nil)
 }
 
@@ -264,7 +267,7 @@ func (c *Controller) setPermissions(ctx *fiber.Ctx) error {
 	if err := c.doSetPermissions(id, req.PermissionIDs); err != nil {
 		return response.Error(ctx, 500, err.Error())
 	}
-
+	c.Service().Broadcaster().SendJSON(lifecycle.KeyRBACData, common.LoadRBACData(), "")
 	return response.Success(ctx, nil)
 }
 

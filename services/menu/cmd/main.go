@@ -73,16 +73,13 @@ func main() {
 		})
 	})
 
-	// 声明服务变量（用于闭包）
-	var svc *lifecycle.Service
-
-	// 创建服务
-	svc = lifecycle.NewBuilder(serviceName).
-		WithNodeID(serviceName + "-1").
-		WithAddress(addr).
-		WithRegistry(reg).
-		WithService(svcInfo).
-		WithApp(app).
+	// 创建并运行服务
+	err := lifecycle.New(serviceName).
+		Node(serviceName + "-1").
+		Addr(addr).
+		Registry(reg).
+		RegInfo(svcInfo).
+		App(app).
 		OnStart(func(s *lifecycle.Service) error {
 			// 数据库迁移
 			db := database.Get()
@@ -95,16 +92,14 @@ func main() {
 			jwtManager := auth.NewJWTManager(&cfg.JWT)
 			jwtMiddleware := middleware.JWTAuth(jwtManager)
 
-			// 创建控制器（传入Service）
+			// 创建控制器
 			baseCtrl := router.NewBaseController(s)
 			menuCtrl := &menu.Controller{BaseController: baseCtrl}
 
 			middlewares := map[string]fiber.Handler{
 				"jwt": jwtMiddleware,
 			}
-			// 注册路由
 			router.Register(app, middlewares, menuCtrl)
-
 			return nil
 		}).
 		OnReady(func(s *lifecycle.Service) error {
@@ -115,18 +110,15 @@ func main() {
 			logger.Info("菜单服务正在清理资源...")
 			return nil
 		}).
-		Build()
+		On(lifecycle.EventReady, func(msg *lifecycle.EventMessage, s *lifecycle.Service) {
+			if msg.Service == serviceName {
+				return
+			}
+			logger.Info("检测到服务就绪", zap.String("service", msg.Service))
+		}).
+		Run()
 
-	// 监听其他服务的生命周期
-	svc.Lifecycle().OnEvent(lifecycle.EventReady, func(msg *lifecycle.LifecycleMessage) {
-		if msg.Service == serviceName {
-			return
-		}
-		logger.Info("检测到服务就绪", zap.String("service", msg.Service))
-	})
-
-	// 运行服务
-	if err := svc.Run(); err != nil {
+	if err != nil {
 		logger.Fatal("服务运行失败", zap.Error(err))
 	}
 }

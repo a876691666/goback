@@ -2,7 +2,6 @@ package broadcast
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,9 +16,9 @@ import (
 // Message 广播消息
 type Message struct {
 	Topic     string    `json:"topic"`
-	Service   string    `json:"service"`   // 发送者服务名
-	NodeID    string    `json:"node_id"`   // 发送者节点ID
-	Target    string    `json:"target"`    // 目标服务名，空表示广播所有
+	Service   string    `json:"service"` // 发送者服务名
+	NodeID    string    `json:"node_id"` // 发送者节点ID
+	Target    string    `json:"target"`  // 目标服务名，空表示广播所有
 	Payload   []byte    `json:"payload"`
 	Timestamp time.Time `json:"timestamp"`
 }
@@ -35,13 +34,10 @@ type Broadcaster struct {
 	subscribers map[string][]Handler
 	mu          sync.RWMutex
 	client      *http.Client
-	ctx         context.Context
-	cancel      context.CancelFunc
 }
 
 // New 创建广播器
 func New(service, nodeID string, reg registry.Registry) *Broadcaster {
-	ctx, cancel := context.WithCancel(context.Background())
 	return &Broadcaster{
 		service:     service,
 		nodeID:      nodeID,
@@ -50,8 +46,6 @@ func New(service, nodeID string, reg registry.Registry) *Broadcaster {
 		client: &http.Client{
 			Timeout: 3 * time.Second,
 		},
-		ctx:    ctx,
-		cancel: cancel,
 	}
 }
 
@@ -64,7 +58,7 @@ func (b *Broadcaster) Subscribe(topic string, handler Handler) {
 
 // Send 发送消息（核心方法）
 // target 为空时广播到所有服务，否则只发送到指定服务
-func (b *Broadcaster) Send(ctx context.Context, topic string, payload []byte, target string) error {
+func (b *Broadcaster) Send(topic string, payload []byte, target string) error {
 	msg := &Message{
 		Topic:     topic,
 		Service:   b.service,
@@ -93,14 +87,9 @@ func (b *Broadcaster) Send(ctx context.Context, topic string, payload []byte, ta
 	return nil
 }
 
-// Publish 广播到所有服务
-func (b *Broadcaster) Publish(ctx context.Context, topic string, payload []byte) error {
-	return b.Send(ctx, topic, payload, "")
-}
-
 // SendTo 发送到指定服务
-func (b *Broadcaster) SendTo(ctx context.Context, topic string, payload []byte, target string) error {
-	return b.Send(ctx, topic, payload, target)
+func (b *Broadcaster) SendTo(topic string, payload []byte, target string) error {
+	return b.Send(topic, payload, target)
 }
 
 // getTargetNodes 获取目标节点列表
@@ -198,26 +187,11 @@ func (b *Broadcaster) Start() error {
 	return nil
 }
 
-// Stop 停止广播器
-func (b *Broadcaster) Stop() error {
-	b.cancel()
-	return nil
-}
-
-// PublishJSON 广播 JSON 消息
-func (b *Broadcaster) PublishJSON(ctx context.Context, topic string, data any) error {
-	payload, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-	return b.Publish(ctx, topic, payload)
-}
-
 // SendJSON 发送 JSON 消息到指定服务
-func (b *Broadcaster) SendJSON(ctx context.Context, topic string, data any, target string) error {
+func (b *Broadcaster) SendJSON(topic string, data any, target string) error {
 	payload, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
-	return b.SendTo(ctx, topic, payload, target)
+	return b.SendTo(topic, payload, target)
 }

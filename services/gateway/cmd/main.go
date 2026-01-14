@@ -16,9 +16,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	serviceName = "gateway-service"
-)
+const serviceName = "gateway-service"
 
 func main() {
 	// 加载配置
@@ -68,27 +66,21 @@ func main() {
 	// API 代理
 	app.All("/api/*", gw.GetHandler())
 
-	// 声明服务变量（用于闭包）
-	var svc *lifecycle.Service
-
-	// 创建服务
-	svc = lifecycle.NewBuilder(serviceName).
-		WithNodeID(serviceName + "-1").
-		WithAddress(addr).
-		WithApp(app).
+	// 创建并运行服务
+	err := lifecycle.New(serviceName).
+		Node(serviceName+"-1").
+		Addr(addr).
+		App(app).
 		OnStart(func(s *lifecycle.Service) error {
-			// 同步已有服务的路由
 			if err := gw.SyncRoutes(); err != nil {
 				logger.Warn("同步服务路由失败", zap.Error(err))
 			}
-
-			// 监听服务变化，自动注册/注销路由
 			if err := gw.WatchServices(); err != nil {
 				return fmt.Errorf("启动服务监听失败: %w", err)
 			}
-
 			return nil
 		}).
+		UseRBAC().
 		OnReady(func(s *lifecycle.Service) error {
 			logger.Info("网关服务就绪", zap.String("addr", addr))
 			return nil
@@ -96,37 +88,30 @@ func main() {
 		OnStop(func(s *lifecycle.Service) error {
 			ctx2, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-
 			if err := gw.Shutdown(ctx2); err != nil {
 				logger.Error("网关关闭异常", zap.Error(err))
 			}
-
 			logger.Info("网关服务正在清理资源...")
 			return nil
 		}).
-		Build()
+		On(lifecycle.EventReady, func(msg *lifecycle.EventMessage, s *lifecycle.Service) {
+			if msg.Service == serviceName {
+				return
+			}
+			logger.Info("检测到服务就绪，更新路由表", zap.String("service", msg.Service))
+			if err := gw.SyncRoutes(); err != nil {
+				logger.Warn("同步路由失败", zap.Error(err))
+			}
+		}).
+		On(lifecycle.EventStopping, func(msg *lifecycle.EventMessage, s *lifecycle.Service) {
+			if msg.Service == serviceName {
+				return
+			}
+			logger.Info("检测到服务停止，更新路由表", zap.String("service", msg.Service))
+		}).
+		Run()
 
-	// 监听其他服务的生命周期
-	svc.Lifecycle().OnEvent(lifecycle.EventReady, func(msg *lifecycle.LifecycleMessage) {
-		if msg.Service == serviceName {
-			return
-		}
-		logger.Info("检测到服务就绪，更新路由表", zap.String("service", msg.Service))
-		// 服务就绪后重新同步路由
-		if err := gw.SyncRoutes(); err != nil {
-			logger.Warn("同步路由失败", zap.Error(err))
-		}
-	})
-
-	svc.Lifecycle().OnEvent(lifecycle.EventStopping, func(msg *lifecycle.LifecycleMessage) {
-		if msg.Service == serviceName {
-			return
-		}
-		logger.Info("检测到服务停止，更新路由表", zap.String("service", msg.Service))
-	})
-
-	// 运行服务
-	if err := svc.Run(); err != nil {
+	if err != nil {
 		logger.Fatal("服务运行失败", zap.Error(err))
 	}
 }
