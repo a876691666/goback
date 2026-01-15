@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/goback/pkg/app/core"
 	"github.com/goback/pkg/config"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -16,7 +17,7 @@ var (
 	ErrTokenInvalid     = errors.New("token is invalid")
 )
 
-// Claims JWT声明
+// Claims JWT声明（内部使用）
 type Claims struct {
 	UserID   int64  `json:"userId"`
 	Username string `json:"username"`
@@ -26,11 +27,15 @@ type Claims struct {
 }
 
 // JWTManager JWT管理器
+// 实现 core.JWTValidator 接口
 type JWTManager struct {
 	secret   []byte
 	issuer   string
 	expireIn time.Duration
 }
+
+// 确保实现 core.JWTValidator 接口
+var _ core.JWTValidator = (*JWTManager)(nil)
 
 // NewJWTManager 创建JWT管理器
 func NewJWTManager(cfg *config.JWTConfig) *JWTManager {
@@ -62,8 +67,9 @@ func (m *JWTManager) GenerateToken(userID int64, username string, roleID int64, 
 	return token.SignedString(m.secret)
 }
 
-// ParseToken 解析Token
-func (m *JWTManager) ParseToken(tokenString string) (*Claims, error) {
+// ParseToken 解析Token，返回 core.JWTClaims
+// 实现 core.JWTValidator 接口
+func (m *JWTManager) ParseToken(tokenString string) (*core.JWTClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		return m.secret, nil
 	})
@@ -82,7 +88,12 @@ func (m *JWTManager) ParseToken(tokenString string) (*Claims, error) {
 	}
 
 	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
-		return claims, nil
+		return &core.JWTClaims{
+			UserID:   claims.UserID,
+			Username: claims.Username,
+			RoleID:   claims.RoleID,
+			RoleCode: claims.RoleCode,
+		}, nil
 	}
 
 	return nil, ErrTokenInvalid

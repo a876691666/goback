@@ -2,41 +2,19 @@ package dictdata
 
 import (
 	"fmt"
+	"strconv"
 
+	"github.com/goback/pkg/app/apis"
+	"github.com/goback/pkg/app/core"
 	"github.com/goback/pkg/dal"
-	"github.com/goback/pkg/response"
-	"github.com/goback/pkg/router"
 	"github.com/goback/services/dict/internal/model"
-	"github.com/gofiber/fiber/v2"
 )
 
-// Controller 字典数据控制器
-type Controller struct {
-	router.BaseController
-}
-
-// Prefix 返回路由前缀
-func (c *Controller) Prefix() string {
-	return "/dict-data"
-}
-
-// Routes 返回路由配置
-func (c *Controller) Routes(middlewares map[string]fiber.Handler) []router.Route {
-	return []router.Route{
-		{Method: "POST", Path: "", Handler: c.create, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "/:id", Handler: c.get, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "/type/:typeId", Handler: c.listByType, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "PUT", Path: "/:id", Handler: c.update, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "DELETE", Path: "/:id", Handler: c.delete, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		// 公开路由(无需认证)
-		{Method: "GET", Path: "/dicts/:code", Handler: c.getByCode},
-	}
-}
-
-func (c *Controller) create(ctx *fiber.Ctx) error {
+// Create 创建字典数据
+func Create(e *core.RequestEvent) error {
 	var req CreateRequest
-	if err := ctx.BodyParser(&req); err != nil {
-		return response.ValidateError(ctx, err.Error())
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
 	dictData := &model.DictData{
 		DictTypeID: req.TypeID,
@@ -52,26 +30,27 @@ func (c *Controller) create(ctx *fiber.Ctx) error {
 		dictData.Status = 1
 	}
 	if err := model.DictDatas.Create(dictData); err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	return response.Success(ctx, dictData)
+	return apis.Success(e, dictData)
 }
 
-func (c *Controller) update(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// Update 更新字典数据
+func Update(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的字典数据ID")
+		return apis.Error(e, 400, "无效的字典数据ID")
 	}
 	var req UpdateRequest
-	if err := ctx.BodyParser(&req); err != nil {
-		return response.ValidateError(ctx, err.Error())
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
 	dictData, err := model.DictDatas.GetOne(id)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
 	if dictData == nil {
-		return response.NotFound(ctx, "字典数据不存在")
+		return apis.Error(e, 404, "字典数据不存在")
 	}
 	if req.Label != "" {
 		dictData.Label = req.Label
@@ -95,65 +74,69 @@ func (c *Controller) update(ctx *fiber.Ctx) error {
 		dictData.Remark = req.Remark
 	}
 	if err := model.DictDatas.Save(dictData); err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	return response.Success(ctx, dictData)
+	return apis.Success(e, dictData)
 }
 
-func (c *Controller) delete(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// Delete 删除字典数据
+func Delete(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的字典数据ID")
+		return apis.Error(e, 400, "无效的字典数据ID")
 	}
 	if err := model.DictDatas.DeleteByID(id); err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	return response.Success(ctx, nil)
+	return apis.Success(e, nil)
 }
 
-func (c *Controller) get(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// Get 获取字典数据
+func Get(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的字典数据ID")
+		return apis.Error(e, 400, "无效的字典数据ID")
 	}
 	dictData, err := model.DictDatas.GetOne(id)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
 	if dictData == nil {
-		return response.NotFound(ctx, "字典数据不存在")
+		return apis.Error(e, 404, "字典数据不存在")
 	}
-	return response.Success(ctx, dictData)
+	return apis.Success(e, dictData)
 }
 
-func (c *Controller) listByType(ctx *fiber.Ctx) error {
-	typeID, err := dal.ParseInt64ID(ctx.Params("typeId"))
+// ListByType 根据类型ID获取字典数据列表
+func ListByType(e *core.RequestEvent) error {
+	typeID, err := strconv.ParseInt(e.Request.PathValue("typeId"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的类型ID")
+		return apis.Error(e, 400, "无效的类型ID")
 	}
 	list, err := model.DictDatas.GetFullList(&dal.ListParams{
 		Filter: fmt.Sprintf("dict_type_id=%d", typeID),
 		Sort:   "sort",
 	})
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	return response.Success(ctx, list)
+	return apis.Success(e, list)
 }
 
-func (c *Controller) getByCode(ctx *fiber.Ctx) error {
-	code := ctx.Params("code")
+// GetByCode 根据字典编码获取字典数据（公开路由）
+func GetByCode(e *core.RequestEvent) error {
+	code := e.Request.PathValue("code")
 	if code == "" {
-		return response.BadRequest(ctx, "无效的字典编码")
+		return apis.Error(e, 400, "无效的字典编码")
 	}
-	list, err := c.GetByTypeCode(code)
+	list, err := GetByTypeCode(code)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	return response.Success(ctx, list)
+	return apis.Success(e, list)
 }
 
 // GetByTypeCode 根据类型编码获取字典数据
-func (c *Controller) GetByTypeCode(code string) ([]model.DictData, error) {
+func GetByTypeCode(code string) ([]model.DictData, error) {
 	return model.DictDatas.GetByTypeCode(code)
 }

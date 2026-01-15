@@ -27,6 +27,14 @@
 			"mode": "auto",
 			"cwd": "${workspaceFolder}",
 			"program": "${workspaceFolder}/services/rbac/cmd/main.go"
+		},
+		{
+			"name": "dict",
+			"type": "go",
+			"request": "launch",
+			"mode": "auto",
+			"cwd": "${workspaceFolder}",
+			"program": "${workspaceFolder}/services/dict/cmd/main.go"
 		}
 	]
 }
