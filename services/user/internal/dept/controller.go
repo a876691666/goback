@@ -1,56 +1,28 @@
 package dept
 
 import (
+	"strconv"
+
+	"github.com/goback/pkg/app/apis"
+	"github.com/goback/pkg/app/core"
 	"github.com/goback/pkg/dal"
-	"github.com/goback/pkg/errors"
-	"github.com/goback/pkg/response"
-	"github.com/goback/pkg/router"
 	"github.com/goback/services/user/internal/model"
-	"github.com/gofiber/fiber/v2"
 )
 
-// Controller 部门控制器
-type Controller struct {
-	router.BaseController
-}
-
 // FindAllEnabled 查找所有启用的部门
-func (c *Controller) FindAllEnabled() ([]model.Dept, error) {
+func FindAllEnabled() ([]model.Dept, error) {
 	return model.Depts.GetFullList(&dal.ListParams{
 		Filter: "status=1",
 	})
 }
 
-// Prefix 返回路由前缀
-func (c *Controller) Prefix() string {
-	return "/depts"
-}
-
-// Routes 返回路由配置
-func (c *Controller) Routes(middlewares map[string]fiber.Handler) []router.Route {
-	return []router.Route{
-		{Method: "POST", Path: "", Handler: c.create, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "PUT", Path: "/:id", Handler: c.update, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "DELETE", Path: "/:id", Handler: c.delete, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "/:id", Handler: c.get, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "", Handler: c.list, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "/tree", Handler: c.getTree, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-	}
-}
-
-func (c *Controller) create(ctx *fiber.Ctx) error {
+// Create 创建部门
+func Create(e *core.RequestEvent) error {
 	var req CreateRequest
-	if err := ctx.BodyParser(&req); err != nil {
-		return response.ValidateError(ctx, err.Error())
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
-	dept, err := c.doCreate(&req)
-	if err != nil {
-		return response.Error(ctx, 500, err.Error())
-	}
-	return response.Success(ctx, dept)
-}
 
-func (c *Controller) doCreate(req *CreateRequest) (*model.Dept, error) {
 	dept := &model.Dept{
 		ParentID: req.ParentID,
 		Name:     req.Name,
@@ -64,34 +36,28 @@ func (c *Controller) doCreate(req *CreateRequest) (*model.Dept, error) {
 		dept.Status = 1
 	}
 	if err := model.Depts.Create(dept); err != nil {
-		return nil, err
+		return apis.Error(e, 500, err.Error())
 	}
-	return dept, nil
+	return apis.Success(e, dept)
 }
 
-func (c *Controller) update(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// Update 更新部门
+func Update(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的部门ID")
+		return apis.Error(e, 400, "无效的部门ID")
 	}
 	var req UpdateRequest
-	if err := ctx.BodyParser(&req); err != nil {
-		return response.ValidateError(ctx, err.Error())
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
-	dept, err := c.doUpdate(id, &req)
-	if err != nil {
-		return response.Error(ctx, 500, err.Error())
-	}
-	return response.Success(ctx, dept)
-}
 
-func (c *Controller) doUpdate(id int64, req *UpdateRequest) (*model.Dept, error) {
 	dept, err := model.Depts.GetOne(id)
 	if err != nil {
-		return nil, err
+		return apis.Error(e, 500, err.Error())
 	}
 	if dept == nil {
-		return nil, errors.NotFound("部门")
+		return apis.Error(e, 404, "部门不存在")
 	}
 
 	if req.Name != "" {
@@ -117,63 +83,60 @@ func (c *Controller) doUpdate(id int64, req *UpdateRequest) (*model.Dept, error)
 	}
 
 	if err := model.Depts.Save(dept); err != nil {
-		return nil, err
+		return apis.Error(e, 500, err.Error())
 	}
-	return dept, nil
+	return apis.Success(e, dept)
 }
 
-func (c *Controller) delete(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// Delete 删除部门
+func Delete(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的部门ID")
+		return apis.Error(e, 400, "无效的部门ID")
 	}
 	if err := model.Depts.DeleteByID(id); err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	return response.Success(ctx, nil)
+	return apis.Success(e, nil)
 }
 
-func (c *Controller) get(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// Get 获取部门详情
+func Get(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的部门ID")
+		return apis.Error(e, 400, "无效的部门ID")
 	}
 	dept, err := model.Depts.GetOne(id)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
 	if dept == nil {
-		return response.NotFound(ctx, "部门不存在")
+		return apis.Error(e, 404, "部门不存在")
 	}
-	return response.Success(ctx, dept)
+	return apis.Success(e, dept)
 }
 
-func (c *Controller) list(ctx *fiber.Ctx) error {
-	params, err := dal.BindQuery(ctx)
+// List 部门列表
+func List(e *core.RequestEvent) error {
+	params, err := dal.BindQueryFromRequest(e.Request)
 	if err != nil {
-		return response.ValidateError(ctx, err.Error())
+		return apis.Error(e, 400, err.Error())
 	}
 	depts, err := model.Depts.GetFullList(params)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	return response.Success(ctx, depts)
+	return apis.Success(e, depts)
 }
 
-func (c *Controller) getTree(ctx *fiber.Ctx) error {
-	tree, err := c.doGetTree()
+// GetTree 获取部门树
+func GetTree(e *core.RequestEvent) error {
+	depts, err := FindAllEnabled()
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	return response.Success(ctx, tree)
-}
-
-func (c *Controller) doGetTree() ([]*model.Dept, error) {
-	depts, err := c.FindAllEnabled()
-	if err != nil {
-		return nil, err
-	}
-	return buildTree(depts, 0), nil
+	tree := buildTree(depts, 0)
+	return apis.Success(e, tree)
 }
 
 func buildTree(depts []model.Dept, parentID int64) []*model.Dept {

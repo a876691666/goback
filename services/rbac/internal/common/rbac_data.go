@@ -1,20 +1,20 @@
 package common
 
 import (
-	"github.com/goback/pkg/lifecycle"
+	"github.com/goback/pkg/app/core"
 	"github.com/goback/services/rbac/internal/model"
 )
 
 // LoadPermissions 加载所有权限
-func LoadPermissions() []lifecycle.Permission {
+func LoadPermissions() []core.Permission {
 	var perms []model.Permission
 	if err := model.Permissions.DB().Find(&perms).Error; err != nil {
 		return nil
 	}
 
-	result := make([]lifecycle.Permission, len(perms))
+	result := make([]core.Permission, len(perms))
 	for i, p := range perms {
-		result[i] = lifecycle.Permission{
+		result[i] = core.Permission{
 			ID:       p.ID,
 			Code:     p.Code,
 			Name:     p.Name,
@@ -26,15 +26,15 @@ func LoadPermissions() []lifecycle.Permission {
 }
 
 // LoadRoles 加载所有角色
-func LoadRoles() []lifecycle.Role {
+func LoadRoles() []core.Role {
 	var roles []model.Role
 	if err := model.Roles.DB().Find(&roles).Error; err != nil {
 		return nil
 	}
 
-	result := make([]lifecycle.Role, len(roles))
+	result := make([]core.Role, len(roles))
 	for i, r := range roles {
-		result[i] = lifecycle.Role{
+		result[i] = core.Role{
 			ID:       r.ID,
 			ParentID: r.ParentID,
 			Code:     r.Code,
@@ -46,8 +46,8 @@ func LoadRoles() []lifecycle.Role {
 }
 
 // LoadRolePermissions 加载角色权限映射
-func LoadRolePermissions() lifecycle.RolePermissionMap {
-	result := make(lifecycle.RolePermissionMap)
+func LoadRolePermissions() core.RolePermissionMap {
+	result := make(core.RolePermissionMap)
 
 	var rolePerms []model.RolePermission
 	model.RolePermissions.DB().Find(&rolePerms)
@@ -59,14 +59,14 @@ func LoadRolePermissions() lifecycle.RolePermissionMap {
 	}
 
 	// 获取所有权限
-	permMap := make(map[int64]lifecycle.Permission)
+	permMap := make(map[int64]core.Permission)
 	for _, p := range LoadPermissions() {
 		permMap[p.ID] = p
 	}
 
 	// 构建角色权限映射
 	for roleID, permIDs := range rolePermMap {
-		perms := make([]lifecycle.Permission, 0, len(permIDs))
+		perms := make([]core.Permission, 0, len(permIDs))
 		for _, permID := range permIDs {
 			if p, ok := permMap[permID]; ok {
 				perms = append(perms, p)
@@ -79,15 +79,15 @@ func LoadRolePermissions() lifecycle.RolePermissionMap {
 }
 
 // LoadPermissionScopes 加载所有权限数据范围
-func LoadPermissionScopes() []lifecycle.PermissionScope {
+func LoadPermissionScopes() []core.PermissionScope {
 	var scopes []model.PermissionScope
 	if err := model.PermissionScopes.DB().Find(&scopes).Error; err != nil {
 		return nil
 	}
 
-	result := make([]lifecycle.PermissionScope, len(scopes))
+	result := make([]core.PermissionScope, len(scopes))
 	for i, s := range scopes {
-		result[i] = lifecycle.PermissionScope{
+		result[i] = core.PermissionScope{
 			ID:             s.ID,
 			PermissionID:   s.PermissionID,
 			Name:           s.Name,
@@ -100,8 +100,8 @@ func LoadPermissionScopes() []lifecycle.PermissionScope {
 }
 
 // LoadRBACData 加载完整的RBAC数据
-func LoadRBACData() lifecycle.RBACData {
-	return lifecycle.RBACData{
+func LoadRBACData() core.RBACData {
+	return core.RBACData{
 		Permissions:      LoadPermissions(),
 		Roles:            LoadRoles(),
 		RolePermissions:  LoadRolePermissions(),

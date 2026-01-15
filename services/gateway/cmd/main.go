@@ -6,14 +6,12 @@ import (
 	"os"
 	"time"
 
+	"github.com/goback/pkg/app/core"
 	"github.com/goback/pkg/cache"
 	"github.com/goback/pkg/config"
-	"github.com/goback/pkg/lifecycle"
 	"github.com/goback/pkg/logger"
-	"github.com/goback/pkg/middleware"
 	pkgRegistry "github.com/goback/pkg/registry"
 	"github.com/goback/services/gateway/internal/gateway"
-	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
 )
 
@@ -44,89 +42,66 @@ func main() {
 	// 创建 Redis 注册中心
 	reg := pkgRegistry.NewRedisRegistry()
 
-	// 构建服务注册信息
-	svcInfo := pkgRegistry.NewServiceBuilder(serviceName, "v1.0.0").
-		WithAddress(addr).
-		Build()
-
 	// 创建网关
 	gw := gateway.NewGateway(reg, cfg)
 
-	// 创建Fiber应用
-	app := fiber.New()
-
-	// 中间件
-	app.Use(middleware.Recovery())
-	app.Use(middleware.Cors())
-	app.Use(middleware.RequestID())
-
-	// 限流
-	rateLimiter := middleware.NewRateLimiter(1000, 100)
-	app.Use(rateLimiter.Middleware())
-
-	// 健康检查
-	app.Get("/health", func(c *fiber.Ctx) error {
-		return c.Status(200).JSON(fiber.Map{
-			"status":  "healthy",
-			"service": serviceName,
-			"time":    time.Now().Format(time.RFC3339),
-		})
+	// 创建应用
+	app := core.NewBaseApp(core.BaseAppConfig{
+		ServiceName:    serviceName,
+		ServiceVersion: "v1.0.0",
 	})
 
-	// 服务状态
-	app.Get("/services", gw.GetServicesStatus)
+	// 设置注册中心和服务信息
+	app.SetRegistry(reg).
+		SetService(pkgRegistry.NewServiceBuilder(serviceName, "v1.0.0").
+			WithAddress(addr).
+			Build())
 
-	// API 代理
-	app.All("/api/*", gw.GetHandler())
+	// 启动时同步路由并监听服务
+	app.OnBootstrap().BindFunc(func(e *core.BootstrapEvent) error {
+		if err := gw.SyncRoutes(); err != nil {
+			logger.Warn("同步服务路由失败", zap.Error(err))
+		}
+		if err := gw.WatchServices(); err != nil {
+			return fmt.Errorf("启动服务监听失败: %w", err)
+		}
+		return e.Next()
+	})
 
-	// 创建并运行服务
-	err := lifecycle.New(serviceName).
-		Node(serviceName+"-1").
-		Addr(addr).
-		Registry(reg).
-		RegInfo(svcInfo).
-		App(app).
-		OnStart(func(s *lifecycle.Service) error {
-			if err := gw.SyncRoutes(); err != nil {
-				logger.Warn("同步服务路由失败", zap.Error(err))
-			}
-			if err := gw.WatchServices(); err != nil {
-				return fmt.Errorf("启动服务监听失败: %w", err)
-			}
-			return nil
-		}).
-		UseRBAC().
-		OnReady(func(s *lifecycle.Service) error {
-			logger.Info("网关服务就绪", zap.String("addr", addr))
-			return nil
-		}).
-		OnStop(func(s *lifecycle.Service) error {
-			ctx2, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := gw.Shutdown(ctx2); err != nil {
-				logger.Error("网关关闭异常", zap.Error(err))
-			}
-			logger.Info("网关服务正在清理资源...")
-			return nil
-		}).
-		On(lifecycle.EventReady, func(msg *lifecycle.EventMessage, s *lifecycle.Service) {
-			if msg.Service == serviceName {
-				return
-			}
-			logger.Info("检测到服务就绪，更新路由表", zap.String("service", msg.Service))
-			if err := gw.SyncRoutes(); err != nil {
-				logger.Warn("同步路由失败", zap.Error(err))
-			}
-		}).
-		On(lifecycle.EventStopping, func(msg *lifecycle.EventMessage, s *lifecycle.Service) {
-			if msg.Service == serviceName {
-				return
-			}
-			logger.Info("检测到服务停止，更新路由表", zap.String("service", msg.Service))
-		}).
-		Run()
+	// 路由注册
+	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
+		// 服务状态
+		e.Router.GET("/services", gw.GetServicesStatus)
 
-	if err != nil {
+		// API 代理 - 使用通配符路由
+		e.Router.GET("/api/{path...}", gw.GetHandler())
+		e.Router.POST("/api/{path...}", gw.GetHandler())
+		e.Router.PUT("/api/{path...}", gw.GetHandler())
+		e.Router.DELETE("/api/{path...}", gw.GetHandler())
+		e.Router.PATCH("/api/{path...}", gw.GetHandler())
+
+		return e.Next()
+	})
+
+	// 服务就绪事件
+	app.OnServiceReady().BindFunc(func(e *core.LifecycleEvent) error {
+		logger.Info("网关服务就绪", zap.String("addr", addr))
+		return e.Next()
+	})
+
+	// 服务停止事件
+	app.OnServiceStopped().BindFunc(func(e *core.LifecycleEvent) error {
+		ctx2, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := gw.Shutdown(ctx2); err != nil {
+			logger.Error("网关关闭异常", zap.Error(err))
+		}
+		logger.Info("网关服务正在清理资源...")
+		return e.Next()
+	})
+
+	// 启动服务
+	if err := app.Serve(core.ServeConfig{HttpAddr: addr, ShowStartBanner: true}); err != nil {
 		logger.Fatal("服务运行失败", zap.Error(err))
 	}
 }

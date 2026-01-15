@@ -3,19 +3,19 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 
+	"github.com/goback/pkg/app/core"
 	"github.com/goback/pkg/config"
 	"github.com/goback/pkg/logger"
+	pkgRegistry "github.com/goback/pkg/registry"
 	"github.com/goback/services/redis/internal/redis"
-	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
 )
 
 const (
 	serviceName = "redis-service"
 	servicePort = 28090
+	basePath    = "cache"
 )
 
 func main() {
@@ -32,52 +32,62 @@ func main() {
 
 	logger.Info("启动 Redis 缓存服务", zap.String("service", serviceName))
 
+	// 服务地址
+	addr := fmt.Sprintf("%s:%d", cfg.Server.HTTP.Host, servicePort)
+
 	// 创建 Redis 服务
 	svc := redis.NewService(serviceName)
 
-	// 启动服务
-	if err := svc.Start(); err != nil {
-		logger.Fatal("服务启动失败", zap.Error(err))
-	}
-
-	// 创建 Fiber 应用
-	app := fiber.New(fiber.Config{
-		DisableStartupMessage: true,
+	// 创建 BaseApp
+	app := core.NewBaseApp(core.BaseAppConfig{
+		ServiceName:    serviceName,
+		ServiceVersion: "v1.0.0",
 	})
 
-	// 健康检查
-	app.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"status": "ok", "service": serviceName})
-	})
+	// 设置注册中心和服务信息
+	app.SetRegistry(pkgRegistry.NewRedisRegistry()).
+		SetService(pkgRegistry.NewServiceBuilder(serviceName, "v1.0.0").
+			WithAddress(addr).
+			WithBasePath(basePath).
+			Build())
 
-	// 注册缓存路由
-	svc.RegisterRoutes(app)
-
-	// 启动 HTTP 服务
-	go func() {
-		addr := fmt.Sprintf(":%d", servicePort)
-		if err := app.Listen(addr); err != nil {
-			logger.Fatal("HTTP 服务启动失败", zap.Error(err))
+	// 启动时初始化缓存服务
+	app.OnBootstrap().BindFunc(func(e *core.BootstrapEvent) error {
+		if err := svc.Start(); err != nil {
+			return fmt.Errorf("缓存服务启动失败: %w", err)
 		}
-	}()
+		return e.Next()
+	})
 
-	logger.Info("Redis 缓存服务已启动",
-		zap.String("mode", "memory"),
-		zap.Int("port", servicePort),
-	)
+	// 路由注册
+	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
+		// 注册缓存路由
+		svc.RegisterRoutes(e.Router)
 
-	// 等待退出信号
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+		return e.Next()
+	})
 
-	logger.Info("正在关闭服务...")
+	// 服务就绪事件
+	app.OnServiceReady().BindFunc(func(e *core.LifecycleEvent) error {
+		logger.Info("Redis 缓存服务已启动",
+			zap.String("mode", "memory"),
+			zap.String("addr", addr),
+		)
+		return e.Next()
+	})
 
-	// 停止服务
-	app.Shutdown()
-	if err := svc.Stop(); err != nil {
-		logger.Error("停止服务失败", zap.Error(err))
+	// 服务停止事件
+	app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+		logger.Info("正在关闭服务...")
+		if err := svc.Stop(); err != nil {
+			logger.Error("停止服务失败", zap.Error(err))
+		}
+		logger.Info("Redis 缓存服务已停止")
+		return e.Next()
+	})
+
+	// 启动服务
+	if err := app.Serve(core.ServeConfig{HttpAddr: addr, ShowStartBanner: true}); err != nil {
+		logger.Fatal("服务运行失败", zap.Error(err))
 	}
-
-	logger.Info("Redis 缓存服务已停止")
 }

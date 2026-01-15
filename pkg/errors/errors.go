@@ -42,6 +42,16 @@ func (e *AppError) Unwrap() error {
 	return e.Err
 }
 
+// GetCode 获取错误状态码
+func (e *AppError) GetCode() int {
+	return e.Code
+}
+
+// GetMessage 获取错误消息
+func (e *AppError) GetMessage() string {
+	return e.Message
+}
+
 // New 创建新错误
 func New(code int, message string) *AppError {
 	return &AppError{

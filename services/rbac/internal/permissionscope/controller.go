@@ -1,60 +1,31 @@
 package permissionscope
 
 import (
+	"strconv"
+
+	"github.com/goback/pkg/app/apis"
+	"github.com/goback/pkg/app/core"
 	"github.com/goback/pkg/dal"
-	"github.com/goback/pkg/errors"
-	"github.com/goback/pkg/lifecycle"
-	"github.com/goback/pkg/response"
-	"github.com/goback/pkg/router"
 	"github.com/goback/services/rbac/internal/common"
 	"github.com/goback/services/rbac/internal/model"
-	"github.com/gofiber/fiber/v2"
 )
 
-// Controller 数据过滤规则控制器
-type Controller struct {
-	router.BaseController
-}
-
-// Prefix 返回路由前缀
-func (c *Controller) Prefix() string {
-	return "/permission-scopes"
-}
-
-// Routes 返回路由配置
-func (c *Controller) Routes(middlewares map[string]fiber.Handler) []router.Route {
-	return []router.Route{
-		{Method: "POST", Path: "", Handler: c.create, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "PUT", Path: "/:id", Handler: c.update, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "DELETE", Path: "/:id", Handler: c.delete, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "/:id", Handler: c.get, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "", Handler: c.list, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "/by-permission/:permissionId", Handler: c.getByPermission, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-	}
-}
-
-func (c *Controller) create(ctx *fiber.Ctx) error {
+// Create 创建数据过滤规则
+func Create(e *core.RequestEvent) error {
 	var req CreateRequest
-	if err := ctx.BodyParser(&req); err != nil {
-		return response.ValidateError(ctx, err.Error())
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
-	scope, err := c.doCreate(&req)
-	if err != nil {
-		return response.Error(ctx, 500, err.Error())
-	}
-	c.Service().Broadcaster().SendJSON(lifecycle.KeyRBACData, common.LoadRBACData(), "")
-	return response.Success(ctx, scope)
-}
 
-func (c *Controller) doCreate(req *CreateRequest) (*model.PermissionScope, error) {
 	// 验证权限存在
 	perm, err := model.Permissions.GetOne(req.PermissionID)
 	if err != nil {
-		return nil, err
+		return apis.Error(e, 500, err.Error())
 	}
 	if perm == nil {
-		return nil, errors.NotFound("权限")
+		return apis.Error(e, 404, "权限不存在")
 	}
+
 	scope := &model.PermissionScope{
 		PermissionID:   req.PermissionID,
 		Name:           req.Name,
@@ -63,36 +34,32 @@ func (c *Controller) doCreate(req *CreateRequest) (*model.PermissionScope, error
 		Description:    req.Description,
 	}
 	if err := model.PermissionScopes.Create(scope); err != nil {
-		return nil, err
+		return apis.Error(e, 500, err.Error())
 	}
-	return scope, nil
+
+	e.App.GetBroadcaster().SendJSON(core.KeyRBACData, common.LoadRBACData(), "")
+	return apis.Success(e, scope)
 }
 
-func (c *Controller) update(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// Update 更新数据过滤规则
+func Update(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的ID")
+		return apis.Error(e, 400, "无效的ID")
 	}
 	var req UpdateRequest
-	if err := ctx.BodyParser(&req); err != nil {
-		return response.ValidateError(ctx, err.Error())
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
-	scope, err := c.doUpdate(id, &req)
-	if err != nil {
-		return response.Error(ctx, 500, err.Error())
-	}
-	c.Service().Broadcaster().SendJSON(lifecycle.KeyRBACData, common.LoadRBACData(), "")
-	return response.Success(ctx, scope)
-}
 
-func (c *Controller) doUpdate(id int64, req *UpdateRequest) (*model.PermissionScope, error) {
 	scope, err := model.PermissionScopes.GetOne(id)
 	if err != nil {
-		return nil, err
+		return apis.Error(e, 500, err.Error())
 	}
 	if scope == nil {
-		return nil, errors.NotFound("数据过滤规则")
+		return apis.Error(e, 404, "数据过滤规则不存在")
 	}
+
 	if req.Name != "" {
 		scope.Name = req.Name
 	}
@@ -106,78 +73,86 @@ func (c *Controller) doUpdate(id int64, req *UpdateRequest) (*model.PermissionSc
 		scope.Description = req.Description
 	}
 	if err := model.PermissionScopes.Save(scope); err != nil {
-		return nil, err
+		return apis.Error(e, 500, err.Error())
 	}
-	return scope, nil
+
+	e.App.GetBroadcaster().SendJSON(core.KeyRBACData, common.LoadRBACData(), "")
+	return apis.Success(e, scope)
 }
 
-func (c *Controller) delete(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// Delete 删除数据过滤规则
+func Delete(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的ID")
+		return apis.Error(e, 400, "无效的ID")
 	}
 	if err := model.PermissionScopes.DeleteByID(id); err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	c.Service().Broadcaster().SendJSON(lifecycle.KeyRBACData, common.LoadRBACData(), "")
-	return response.Success(ctx, nil)
+	e.App.GetBroadcaster().SendJSON(core.KeyRBACData, common.LoadRBACData(), "")
+	return apis.Success(e, nil)
 }
 
-func (c *Controller) get(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// Get 获取数据过滤规则详情
+func Get(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的ID")
+		return apis.Error(e, 400, "无效的ID")
 	}
 	scope, err := model.PermissionScopes.GetOne(id)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
 	if scope == nil {
-		return response.NotFound(ctx, "数据过滤规则不存在")
+		return apis.Error(e, 404, "数据过滤规则不存在")
 	}
-	return response.Success(ctx, scope)
+	return apis.Success(e, scope)
 }
 
-func (c *Controller) list(ctx *fiber.Ctx) error {
-	params, err := dal.BindQuery(ctx)
+// List 数据过滤规则列表
+func List(e *core.RequestEvent) error {
+	params, err := dal.BindQueryFromRequest(e.Request)
 	if err != nil {
-		return response.ValidateError(ctx, err.Error())
+		return apis.Error(e, 400, err.Error())
 	}
 	result, err := model.PermissionScopes.GetList(params)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	return response.SuccessPage(ctx, result.Items, result.TotalItems, result.Page, result.PerPage)
+	return apis.Paged(e, result.Items, result.TotalItems, result.Page, result.PerPage)
 }
 
-func (c *Controller) getByPermission(ctx *fiber.Ctx) error {
-	permissionID, err := dal.ParseInt64ID(ctx.Params("permissionId"))
+// GetByPermission 根据权限获取数据过滤规则
+func GetByPermission(e *core.RequestEvent) error {
+	permissionID, err := strconv.ParseInt(e.Request.PathValue("permissionId"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的权限ID")
+		return apis.Error(e, 400, "无效的权限ID")
 	}
 	scopes, err := model.PermissionScopes.GetByPermissionID(permissionID)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	return response.Success(ctx, scopes)
+	return apis.Success(e, scopes)
 }
 
+// ================== 导出函数（供其他服务调用） ==================
+
 // GetByPermissionID 根据权限ID获取数据过滤规则
-func (c *Controller) GetByPermissionID(permissionID int64) ([]model.PermissionScope, error) {
+func GetByPermissionID(permissionID int64) ([]model.PermissionScope, error) {
 	return model.PermissionScopes.GetByPermissionID(permissionID)
 }
 
 // GetByPermissionIDs 根据多个权限ID获取数据过滤规则
-func (c *Controller) GetByPermissionIDs(permissionIDs []int64) ([]model.PermissionScope, error) {
+func GetByPermissionIDs(permissionIDs []int64) ([]model.PermissionScope, error) {
 	return model.PermissionScopes.GetByPermissionIDs(permissionIDs)
 }
 
 // GetByTableName 根据表名和权限ID列表获取数据过滤规则
-func (c *Controller) GetByTableName(tableName string, permissionIDs []int64) ([]model.PermissionScope, error) {
+func GetByTableName(tableName string, permissionIDs []int64) ([]model.PermissionScope, error) {
 	return model.PermissionScopes.GetByScopeTableName(tableName, permissionIDs)
 }
 
 // DeleteByPermissionID 根据权限ID删除数据过滤规则
-func (c *Controller) DeleteByPermissionID(permissionID int64) error {
+func DeleteByPermissionID(permissionID int64) error {
 	return model.PermissionScopes.DeleteByPermissionID(permissionID)
 }

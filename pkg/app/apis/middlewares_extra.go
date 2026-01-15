@@ -418,6 +418,33 @@ func Error(e *core.RequestEvent, code int, message string) error {
 	})
 }
 
+// ErrorFromErr 从 error 返回错误响应，自动提取状态码
+// 支持带 Code 字段的 AppError 类型（通过反射）
+func ErrorFromErr(e *core.RequestEvent, err error, defaultCode ...int) error {
+	code := 500
+	if len(defaultCode) > 0 {
+		code = defaultCode[0]
+	}
+	message := err.Error()
+
+	// 尝试通过接口提取状态码
+	if codeErr, ok := err.(interface{ GetCode() int }); ok {
+		code = codeErr.GetCode()
+	} else if codeErr, ok := err.(interface{ StatusCode() int }); ok {
+		code = codeErr.StatusCode()
+	}
+
+	// 尝试提取消息（去掉状态码前缀）
+	if msgErr, ok := err.(interface{ GetMessage() string }); ok {
+		message = msgErr.GetMessage()
+	}
+
+	return e.JSON(code, ErrorResponse{
+		Code:    code,
+		Message: message,
+	})
+}
+
 // ErrorWithDetails 返回带详情的错误响应
 func ErrorWithDetails(e *core.RequestEvent, code int, message string, details any) error {
 	return e.JSON(code, ErrorResponse{

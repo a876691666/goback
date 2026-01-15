@@ -1,123 +1,99 @@
 package sysconfig
 
 import (
+	"strconv"
+
+	"github.com/goback/pkg/app/apis"
+	"github.com/goback/pkg/app/core"
 	"github.com/goback/pkg/dal"
-	"github.com/goback/pkg/response"
-	"github.com/goback/pkg/router"
 	"github.com/goback/services/config/internal/model"
-	"github.com/gofiber/fiber/v2"
 )
 
-// Controller 系统参数配置控制器
-type Controller struct {
-	router.BaseController
-}
-
-// Prefix 返回路由前缀
-func (c *Controller) Prefix() string {
-	return "/config"
-}
-
-// Routes 返回路由配置
-func (c *Controller) Routes(middlewares map[string]fiber.Handler) []router.Route {
-	return []router.Route{
-		// US6: 获取配置详情
-		{Method: "GET", Path: "info", Handler: c.info, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		// US3: 按键名获取配置
-		{Method: "GET", Path: "get-by-key", Handler: c.getByKey},
-		// US1: 分页查询列表
-		{Method: "GET", Path: "page", Handler: c.page, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		// US2: 新增配置
-		{Method: "POST", Path: "add", Handler: c.add, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		// US4: 更新配置
-		{Method: "PUT", Path: "update", Handler: c.update, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		// US5: 批量删除配置
-		{Method: "DELETE", Path: "remove", Handler: c.remove, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-	}
-}
-
-// info 获取配置详情 (US6)
-func (c *Controller) info(ctx *fiber.Ctx) error {
-	idStr := ctx.Query("id")
+// Info 获取配置详情 (US6)
+func Info(e *core.RequestEvent) error {
+	idStr := e.Request.URL.Query().Get("id")
 	if idStr == "" {
-		return response.ValidateError(ctx, "配置ID不能为空")
+		return apis.Error(e, 400, "配置ID不能为空")
 	}
 
-	id, err := dal.ParseInt64ID(idStr)
+	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的配置ID")
+		return apis.Error(e, 400, "无效的配置ID")
 	}
 
 	sysConfig, err := model.SysConfigs.GetOne(id)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	if sysConfig == nil {
-		return response.NotFound(ctx, "参数配置不存在")
+		return apis.Error(e, 404, "参数配置不存在")
 	}
 
-	return response.Success(ctx, sysConfig)
+	return apis.Success(e, sysConfig)
 }
 
-// getByKey 按键名获取配置 (US3)
-func (c *Controller) getByKey(ctx *fiber.Ctx) error {
-	configKey := ctx.Query("configKey")
+// GetByKey 按键名获取配置 (US3)
+func GetByKey(e *core.RequestEvent) error {
+	configKey := e.Request.URL.Query().Get("configKey")
 	if configKey == "" {
-		return response.ValidateError(ctx, "参数键名不能为空")
+		return apis.Error(e, 400, "参数键名不能为空")
 	}
 
 	sysConfig, err := model.SysConfigs.GetByKey(configKey)
 	if err != nil {
-		return response.NotFound(ctx, "参数配置不存在")
+		return apis.Error(e, 404, "参数配置不存在")
 	}
 
-	return response.Success(ctx, sysConfig)
+	return apis.Success(e, sysConfig)
 }
 
-// page 分页查询列表 (US1)
-func (c *Controller) page(ctx *fiber.Ctx) error {
-	// 绑定查询参数
-	var req PageRequest
-	if err := ctx.QueryParser(&req); err != nil {
-		return response.ValidateError(ctx, err.Error())
+// Page 分页查询列表 (US1)
+func Page(e *core.RequestEvent) error {
+	query := e.Request.URL.Query()
+	
+	// 解析分页参数
+	page := 1
+	pageSize := 10
+	if p := query.Get("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	if ps := query.Get("pageSize"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 && v <= 100 {
+			pageSize = v
+		}
 	}
 
-	// 设置默认值
-	if req.Page <= 0 {
-		req.Page = 1
-	}
-	if req.PageSize <= 0 {
-		req.PageSize = 10
-	}
-	if req.PageSize > 100 {
-		req.PageSize = 100
-	}
+	configName := query.Get("configName")
+	configKey := query.Get("configKey")
+	configType := query.Get("configType")
 
 	// 构建 SSQL 过滤条件
 	filter := ""
-	if req.ConfigName != "" {
+	if configName != "" {
 		if filter != "" {
 			filter += " && "
 		}
-		filter += "config_name ~ '" + req.ConfigName + "'"
+		filter += "config_name ~ '" + configName + "'"
 	}
-	if req.ConfigKey != "" {
+	if configKey != "" {
 		if filter != "" {
 			filter += " && "
 		}
-		filter += "config_key ~ '" + req.ConfigKey + "'"
+		filter += "config_key ~ '" + configKey + "'"
 	}
-	if req.ConfigType != "" {
+	if configType != "" {
 		if filter != "" {
 			filter += " && "
 		}
-		filter += "config_type = '" + req.ConfigType + "'"
+		filter += "config_type = '" + configType + "'"
 	}
 
 	// 构建列表查询参数
 	params := &dal.ListParams{
-		Page:    req.Page,
-		PerPage: req.PageSize,
+		Page:    page,
+		PerPage: pageSize,
 		Filter:  filter,
 		Sort:    "-id",
 	}
@@ -125,34 +101,34 @@ func (c *Controller) page(ctx *fiber.Ctx) error {
 	// 查询列表
 	result, err := model.SysConfigs.GetList(params)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 
-	return response.SuccessPage(ctx, result.Items, result.TotalItems, result.Page, result.PerPage)
+	return apis.Paged(e, result.Items, result.TotalItems, result.Page, result.PerPage)
 }
 
-// add 新增配置 (US2)
-func (c *Controller) add(ctx *fiber.Ctx) error {
+// Add 新增配置 (US2)
+func Add(e *core.RequestEvent) error {
 	var req CreateRequest
-	if err := ctx.BodyParser(&req); err != nil {
-		return response.ValidateError(ctx, err.Error())
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
 
 	// 必填字段验证
 	if req.ConfigName == "" {
-		return response.ValidateError(ctx, "参数名称不能为空")
+		return apis.Error(e, 400, "参数名称不能为空")
 	}
 	if req.ConfigKey == "" {
-		return response.ValidateError(ctx, "参数键名不能为空")
+		return apis.Error(e, 400, "参数键名不能为空")
 	}
 
 	// 键名唯一性校验
 	exists, err := model.SysConfigs.ExistsByKey(req.ConfigKey)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	if exists {
-		return response.Error(ctx, 409, "参数键名已存在")
+		return apis.Error(e, 409, "参数键名已存在")
 	}
 
 	// 创建配置
@@ -169,47 +145,47 @@ func (c *Controller) add(ctx *fiber.Ctx) error {
 		sysConfig.ConfigType = "N"
 	}
 
-	// 获取当前用户ID（从JWT中解析）
-	if userID, ok := ctx.Locals("userID").(int64); ok {
+	// 获取当前用户ID
+	if userID := apis.GetUserID(e); userID > 0 {
 		sysConfig.CreateBy = userID
 	}
 
 	if err := model.SysConfigs.Create(sysConfig); err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 
-	return response.Success(ctx, sysConfig)
+	return apis.Success(e, sysConfig)
 }
 
-// update 更新配置 (US4)
-func (c *Controller) update(ctx *fiber.Ctx) error {
+// Update 更新配置 (US4)
+func Update(e *core.RequestEvent) error {
 	var req UpdateRequest
-	if err := ctx.BodyParser(&req); err != nil {
-		return response.ValidateError(ctx, err.Error())
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
 
 	// ID 必填验证
 	if req.ID <= 0 {
-		return response.ValidateError(ctx, "配置ID不能为空")
+		return apis.Error(e, 400, "配置ID不能为空")
 	}
 
 	// 获取现有配置
 	sysConfig, err := model.SysConfigs.GetOne(req.ID)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	if sysConfig == nil {
-		return response.NotFound(ctx, "参数配置不存在")
+		return apis.Error(e, 404, "参数配置不存在")
 	}
 
 	// 如果要更新键名，检查唯一性
 	if req.ConfigKey != "" && req.ConfigKey != sysConfig.ConfigKey {
 		exists, err := model.SysConfigs.ExistsByKey(req.ConfigKey, req.ID)
 		if err != nil {
-			return response.Error(ctx, 500, err.Error())
+			return apis.ErrorFromErr(e, err)
 		}
 		if exists {
-			return response.Error(ctx, 409, "参数键名已存在")
+			return apis.Error(e, 409, "参数键名已存在")
 		}
 		sysConfig.ConfigKey = req.ConfigKey
 	}
@@ -229,31 +205,31 @@ func (c *Controller) update(ctx *fiber.Ctx) error {
 	}
 
 	if err := model.SysConfigs.Save(sysConfig); err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 
-	return response.Success(ctx, sysConfig)
+	return apis.Success(e, sysConfig)
 }
 
-// remove 批量删除配置 (US5)
-func (c *Controller) remove(ctx *fiber.Ctx) error {
+// Remove 批量删除配置 (US5)
+func Remove(e *core.RequestEvent) error {
 	var req RemoveRequest
-	if err := ctx.BodyParser(&req); err != nil {
-		return response.ValidateError(ctx, err.Error())
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
 
 	// 验证 ID 列表
 	if len(req.IDs) == 0 {
-		return response.ValidateError(ctx, "配置ID列表不能为空")
+		return apis.Error(e, 400, "配置ID列表不能为空")
 	}
 
 	// 批量删除
 	affected, err := model.SysConfigs.DeleteByIds(req.IDs)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 
-	return response.Success(ctx, fiber.Map{
+	return apis.Success(e, map[string]any{
 		"deleted": affected,
 	})
 }

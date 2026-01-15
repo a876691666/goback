@@ -1,63 +1,68 @@
 package operationlog
 
 import (
+	"fmt"
+	"strings"
+
+	"github.com/goback/pkg/app/apis"
+	"github.com/goback/pkg/app/core"
 	"github.com/goback/pkg/dal"
-	"github.com/goback/pkg/response"
-	"github.com/goback/pkg/router"
 	"github.com/goback/services/log/internal/model"
-	"github.com/gofiber/fiber/v2"
 )
 
-// Controller 操作日志控制器
-type Controller struct {
-	router.BaseController
-}
-
-// Prefix 返回路由前缀
-func (c *Controller) Prefix() string {
-	return "/operation-logs"
-}
-
-// Routes 返回路由配置
-func (c *Controller) Routes(middlewares map[string]fiber.Handler) []router.Route {
-	return []router.Route{
-		{Method: "GET", Path: "", Handler: c.list, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "DELETE", Path: "/:ids", Handler: c.delete, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "DELETE", Path: "/clear", Handler: c.clear, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-	}
-}
-
-func (c *Controller) list(ctx *fiber.Ctx) error {
-	params, err := dal.BindQuery(ctx)
+// List 操作日志列表
+func List(e *core.RequestEvent) error {
+	params, err := dal.BindQueryFromRequest(e.Request)
 	if err != nil {
-		return response.ValidateError(ctx, err.Error())
+		return apis.Error(e, 400, err.Error())
 	}
 	result, err := model.OperationLogs.GetList(params)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
-	return response.SuccessPage(ctx, result.Items, result.TotalItems, result.Page, result.PerPage)
+	return apis.Paged(e, result.Items, result.TotalItems, result.Page, result.PerPage)
 }
 
-func (c *Controller) delete(ctx *fiber.Ctx) error {
-	ids, err := dal.ParseInt64IDs(ctx.Params("ids"))
+// Delete 删除操作日志
+func Delete(e *core.RequestEvent) error {
+	idsStr := e.Request.PathValue("ids")
+	ids, err := parseIDs(idsStr)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的ID格式")
+		return apis.Error(e, 400, "无效的ID格式")
 	}
 	if err := model.OperationLogs.DeleteByIDs(ids); err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
-	return response.Success(ctx, nil)
+	return apis.Success(e, nil)
 }
 
-func (c *Controller) clear(ctx *fiber.Ctx) error {
+// Clear 清空操作日志
+func Clear(e *core.RequestEvent) error {
 	if err := model.OperationLogs.Truncate(); err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
-	return response.Success(ctx, nil)
+	return apis.Success(e, nil)
 }
 
 // CreateLog 创建操作日志
-func (c *Controller) CreateLog(log *model.OperationLog) error {
+func CreateLog(log *model.OperationLog) error {
 	return model.OperationLogs.Create(log)
+}
+
+// parseIDs 解析逗号分隔的ID字符串
+func parseIDs(idsStr string) ([]int64, error) {
+	parts := strings.Split(idsStr, ",")
+	ids := make([]int64, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		var id int64
+		if _, err := fmt.Sscanf(part, "%d", &id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }

@@ -17,7 +17,7 @@ func Create(e *core.RequestEvent) error {
 	}
 	exists, err := model.DictTypes.ExistsByCode(req.Code)
 	if err != nil {
-		return apis.Error(e, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	if exists {
 		return apis.Error(e, 400, "字典编码已存在")
@@ -32,7 +32,7 @@ func Create(e *core.RequestEvent) error {
 		dictType.Status = 1
 	}
 	if err := model.DictTypes.Create(dictType); err != nil {
-		return apis.Error(e, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	return apis.Success(e, dictType)
 }
@@ -50,7 +50,7 @@ func Update(e *core.RequestEvent) error {
 	}
 	dictType, err := model.DictTypes.GetOne(id)
 	if err != nil {
-		return apis.Error(e, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	if dictType == nil {
 		return apis.Error(e, 404, "字典类型不存在")
@@ -59,7 +59,7 @@ func Update(e *core.RequestEvent) error {
 	if req.Code != "" && req.Code != dictType.Code {
 		exists, err := model.DictTypes.ExistsByCode(req.Code, id)
 		if err != nil {
-			return apis.Error(e, 500, err.Error())
+			return apis.ErrorFromErr(e, err)
 		}
 		if exists {
 			return apis.Error(e, 400, "字典编码已存在")
@@ -77,7 +77,7 @@ func Update(e *core.RequestEvent) error {
 		dictType.Description = req.Remark
 	}
 	if err := model.DictTypes.Save(dictType); err != nil {
-		return apis.Error(e, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	return apis.Success(e, dictType)
 }
@@ -89,7 +89,7 @@ func Delete(e *core.RequestEvent) error {
 		return apis.Error(e, 400, "无效的字典类型ID")
 	}
 	if err := model.DictTypes.DeleteByID(id); err != nil {
-		return apis.Error(e, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	return apis.Success(e, nil)
 }
@@ -102,7 +102,7 @@ func Get(e *core.RequestEvent) error {
 	}
 	dictType, err := model.DictTypes.GetOne(id)
 	if err != nil {
-		return apis.Error(e, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	if dictType == nil {
 		return apis.Error(e, 404, "字典类型不存在")
@@ -120,7 +120,7 @@ func List(e *core.RequestEvent) error {
 	}
 	result, err := model.DictTypes.GetList(params)
 	if err != nil {
-		return apis.Error(e, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	return apis.Paged(e, result.Items, result.TotalItems, result.Page, result.PerPage)
 }

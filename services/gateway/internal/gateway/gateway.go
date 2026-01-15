@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/goback/pkg/app/apis"
+	"github.com/goback/pkg/app/core"
 	"github.com/goback/pkg/config"
 	"github.com/goback/pkg/logger"
 	pkgRegistry "github.com/goback/pkg/registry"
-	"github.com/gofiber/fiber/v2"
-	"github.com/valyala/fasthttp/fasthttpadaptor"
 	"go-micro.dev/v5/registry"
 	"go.uber.org/zap"
 )
@@ -214,10 +214,10 @@ func (g *Gateway) StopWatch() {
 	}
 }
 
-// GetHandler 获取Fiber处理器
-func (g *Gateway) GetHandler() fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		path := c.Path()
+// GetHandler 获取HTTP处理器（core.RequestEvent版本）
+func (g *Gateway) GetHandler() func(e *core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		path := e.Request.URL.Path
 
 		// 查找匹配的路由
 		g.mu.RLock()
@@ -231,19 +231,19 @@ func (g *Gateway) GetHandler() fiber.Handler {
 		g.mu.RUnlock()
 
 		if matchedRoute == nil {
-			return c.Status(404).JSON(fiber.Map{"code": 404, "message": "服务未找到"})
+			return apis.Error(e, 404, "服务未找到")
 		}
 
 		// 检查方法是否允许
 		methodAllowed := false
 		for _, m := range matchedRoute.Methods {
-			if m == c.Method() {
+			if m == e.Request.Method {
 				methodAllowed = true
 				break
 			}
 		}
 		if !methodAllowed {
-			return c.Status(405).JSON(fiber.Map{"code": 405, "message": "方法不允许"})
+			return apis.Error(e, 405, "方法不允许")
 		}
 
 		// 服务发现
@@ -253,31 +253,28 @@ func (g *Gateway) GetHandler() fiber.Handler {
 				zap.String("service", matchedRoute.ServiceName),
 				zap.Error(err),
 			)
-			return c.Status(503).JSON(fiber.Map{"code": 503, "message": "服务不可用"})
+			return apis.Error(e, 503, "服务不可用")
 		}
 
 		// 简单轮询负载均衡
 		service := services[0]
 		if len(service.Nodes) == 0 {
-			return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{
-				"code":    503,
-				"message": "服务节点不可用",
-			})
+			return apis.Error(e, 503, "服务节点不可用")
 		}
 
 		node := service.Nodes[time.Now().UnixNano()%int64(len(service.Nodes))]
 
 		// 代理请求
-		return g.proxyRequest(c, node.Address, matchedRoute)
+		return g.proxyRequest(e, node.Address, matchedRoute)
 	}
 }
 
 // proxyRequest 代理请求到后端服务
-func (g *Gateway) proxyRequest(c *fiber.Ctx, targetAddr string, route *ServiceRoute) error {
+func (g *Gateway) proxyRequest(e *core.RequestEvent, targetAddr string, route *ServiceRoute) error {
 	targetURL, err := url.Parse("http://" + targetAddr)
 	if err != nil {
 		logger.Error("解析目标URL失败", zap.Error(err))
-		return c.Status(500).JSON(fiber.Map{"code": 500, "message": "内部错误"})
+		return apis.Error(e, 500, "内部错误")
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
@@ -285,9 +282,15 @@ func (g *Gateway) proxyRequest(c *fiber.Ctx, targetAddr string, route *ServiceRo
 	// 修改请求，需要在 handler 中设置
 	originalDirector := proxy.Director
 
-	clientIP := c.IP()
-	reqHost := c.Hostname()
-	scheme := c.Protocol()
+	clientIP := e.Request.RemoteAddr
+	if forwarded := e.Request.Header.Get("X-Forwarded-For"); forwarded != "" {
+		clientIP = forwarded
+	}
+	reqHost := e.Request.Host
+	scheme := "http"
+	if e.Request.TLS != nil {
+		scheme = "https"
+	}
 
 	proxy.Director = func(req *http.Request) {
 		originalDirector(req)
@@ -324,18 +327,18 @@ func (g *Gateway) proxyRequest(c *fiber.Ctx, targetAddr string, route *ServiceRo
 		)
 	}
 
-	// 将 net/http handler 转为 fasthttp handler 并直接调用
-	fastHandler := fasthttpadaptor.NewFastHTTPHandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		proxy.ServeHTTP(w, r)
-	})
-
-	fastHandler(c.Context())
+	// 使用 ResponseWriter 代理
+	proxy.ServeHTTP(e.Response, e.Request)
 	return nil
 }
 
 // HealthCheck 健康检查
-func (g *Gateway) HealthCheck(c *fiber.Ctx) error {
-	return c.Status(200).JSON(fiber.Map{"status": "healthy", "service": "gateway", "time": time.Now().Format(time.RFC3339)})
+func (g *Gateway) HealthCheck(e *core.RequestEvent) error {
+	return e.JSON(200, map[string]any{
+		"status":  "healthy",
+		"service": "gateway",
+		"time":    time.Now().Format(time.RFC3339),
+	})
 }
 
 // ServiceStatus 服务状态
@@ -347,13 +350,13 @@ type ServiceStatus struct {
 }
 
 // GetServicesStatus 获取所有服务状态
-func (g *Gateway) GetServicesStatus(c *fiber.Ctx) error {
+func (g *Gateway) GetServicesStatus(e *core.RequestEvent) error {
 	var statuses []ServiceStatus
 
 	// 获取所有注册的服务
 	services, err := g.registry.ListServices()
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"code": 500, "message": "获取服务列表失败"})
+		return apis.Error(e, 500, "获取服务列表失败")
 	}
 
 	for _, svc := range services {
@@ -390,7 +393,7 @@ func (g *Gateway) GetServicesStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	return c.Status(200).JSON(fiber.Map{"code": 0, "message": "success", "data": statuses})
+	return apis.Success(e, statuses)
 }
 
 // CircuitBreaker 熔断器

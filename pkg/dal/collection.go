@@ -1,12 +1,12 @@
 package dal
 
 import (
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/goback/pkg/ssql"
-	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 )
 
@@ -64,12 +64,33 @@ func (c *Collection[T]) DB() *gorm.DB {
 
 // ========== 工具函数 ==========
 
-// BindQuery 绑定查询参数
-func BindQuery(ctx *fiber.Ctx) (*ListParams, error) {
+// BindQuery 绑定查询参数 (标准 http.Request)
+func BindQuery(r *http.Request) (*ListParams, error) {
+	return BindQueryFromRequest(r)
+}
+
+// BindQueryFromRequest 绑定查询参数 (标准 http.Request 版本)
+func BindQueryFromRequest(r *http.Request) (*ListParams, error) {
 	params := &ListParams{Page: 1, PerPage: 20}
-	if err := ctx.QueryParser(params); err != nil {
-		return nil, err
+	query := r.URL.Query()
+
+	params.Filter = query.Get("filter")
+	params.Fields = query.Get("fields")
+	params.Sort = query.Get("sort")
+	params.Expand = query.Get("expand")
+	params.SkipTotal = query.Get("skipTotal") == "true"
+
+	if pageStr := query.Get("page"); pageStr != "" {
+		if page, err := strconv.Atoi(pageStr); err == nil && page > 0 {
+			params.Page = page
+		}
 	}
+	if perPageStr := query.Get("perPage"); perPageStr != "" {
+		if perPage, err := strconv.Atoi(perPageStr); err == nil && perPage > 0 {
+			params.PerPage = perPage
+		}
+	}
+
 	return params, nil
 }
 

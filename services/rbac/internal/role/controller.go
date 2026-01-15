@@ -1,76 +1,43 @@
 package role
 
 import (
+	"fmt"
+	"strconv"
+
+	"github.com/goback/pkg/app/apis"
+	"github.com/goback/pkg/app/core"
 	"github.com/goback/pkg/dal"
-	"github.com/goback/pkg/errors"
-	"github.com/goback/pkg/lifecycle"
-	"github.com/goback/pkg/response"
-	"github.com/goback/pkg/router"
 	"github.com/goback/services/rbac/internal/common"
 	"github.com/goback/services/rbac/internal/model"
 	"github.com/goback/services/rbac/internal/permission"
-	"github.com/gofiber/fiber/v2"
 )
 
-// Controller 角色控制器
-type Controller struct {
-	router.BaseController
-	PermCtrl *permission.Controller
-}
-
-// Prefix 返回路由前缀
-func (c *Controller) Prefix() string {
-	return "/roles"
-}
-
-// Routes 返回路由配置
-func (c *Controller) Routes(middlewares map[string]fiber.Handler) []router.Route {
-	return []router.Route{
-		{Method: "POST", Path: "", Handler: c.create, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "PUT", Path: "/:id", Handler: c.update, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "DELETE", Path: "/:id", Handler: c.delete, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "/:id", Handler: c.get, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "", Handler: c.list, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "/all", Handler: c.getAll, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "/tree", Handler: c.getTree, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "/:id/permissions", Handler: c.getPermissions, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "PUT", Path: "/:id/permissions", Handler: c.setPermissions, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "/:id/all-permissions", Handler: c.getAllPermissions, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "POST", Path: "/cache/refresh", Handler: c.refreshCache, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-	}
-}
-
-func (c *Controller) create(ctx *fiber.Ctx) error {
+// Create 创建角色
+func Create(e *core.RequestEvent) error {
 	var req CreateRequest
-	if err := ctx.BodyParser(&req); err != nil {
-		return response.ValidateError(ctx, err.Error())
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
-	role, err := c.doCreate(&req)
-	if err != nil {
-		return response.Error(ctx, 500, err.Error())
-	}
-	c.Service().Broadcaster().SendJSON(lifecycle.KeyRBACData, common.LoadRBACData(), "")
-	return response.Success(ctx, role)
-}
 
-func (c *Controller) doCreate(req *CreateRequest) (*model.Role, error) {
 	exists, err := model.Roles.ExistsByCode(req.Code)
 	if err != nil {
-		return nil, err
+		return apis.Error(e, 500, err.Error())
 	}
 	if exists {
-		return nil, errors.Duplicate("角色编码")
+		return apis.Error(e, 409, "角色编码已存在")
 	}
+
 	// 验证父角色存在
 	if req.ParentID > 0 {
 		parent, err := model.Roles.GetOne(req.ParentID)
 		if err != nil {
-			return nil, err
+			return apis.Error(e, 500, err.Error())
 		}
 		if parent == nil {
-			return nil, errors.NotFound("父角色")
+			return apis.Error(e, 404, "父角色不存在")
 		}
 	}
+
 	role := &model.Role{
 		ParentID:    req.ParentID,
 		Name:        req.Name,
@@ -83,60 +50,57 @@ func (c *Controller) doCreate(req *CreateRequest) (*model.Role, error) {
 		role.Status = 1
 	}
 	if err := model.Roles.Create(role); err != nil {
-		return nil, err
+		return apis.Error(e, 500, err.Error())
 	}
+
 	// 刷新缓存
 	model.RoleTreeCache.Refresh()
-	return role, nil
+	e.App.GetBroadcaster().SendJSON(core.KeyRBACData, common.LoadRBACData(), "")
+	return apis.Success(e, role)
 }
 
-func (c *Controller) update(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// Update 更新角色
+func Update(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的角色ID")
+		return apis.Error(e, 400, "无效的角色ID")
 	}
 	var req UpdateRequest
-	if err := ctx.BodyParser(&req); err != nil {
-		return response.ValidateError(ctx, err.Error())
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
-	role, err := c.doUpdate(id, &req)
-	if err != nil {
-		return response.Error(ctx, 500, err.Error())
-	}
-	c.Service().Broadcaster().SendJSON(lifecycle.KeyRBACData, common.LoadRBACData(), "")
-	return response.Success(ctx, role)
-}
 
-func (c *Controller) doUpdate(id int64, req *UpdateRequest) (*model.Role, error) {
 	role, err := model.Roles.GetOne(id)
 	if err != nil {
-		return nil, err
+		return apis.Error(e, 500, err.Error())
 	}
 	if role == nil {
-		return nil, errors.NotFound("角色")
+		return apis.Error(e, 404, "角色不存在")
 	}
+
 	// 验证父角色（不能设置为自己或自己的后代）
 	if req.ParentID > 0 && req.ParentID != role.ParentID {
 		if req.ParentID == id {
-			return nil, errors.BadRequest("不能将自己设为父角色")
+			return apis.Error(e, 400, "不能将自己设为父角色")
 		}
 		descendants, _ := model.RoleTreeCache.GetDescendants(id)
 		for _, descID := range descendants {
 			if descID == req.ParentID {
-				return nil, errors.BadRequest("不能将后代角色设为父角色")
+				return apis.Error(e, 400, "不能将后代角色设为父角色")
 			}
 		}
 		parent, err := model.Roles.GetOne(req.ParentID)
 		if err != nil {
-			return nil, err
+			return apis.Error(e, 500, err.Error())
 		}
 		if parent == nil {
-			return nil, errors.NotFound("父角色")
+			return apis.Error(e, 404, "父角色不存在")
 		}
 		role.ParentID = req.ParentID
 	} else if req.ParentID == 0 {
 		role.ParentID = 0
 	}
+
 	if req.Name != "" {
 		role.Name = req.Name
 	}
@@ -150,151 +114,168 @@ func (c *Controller) doUpdate(id int64, req *UpdateRequest) (*model.Role, error)
 		role.Description = req.Description
 	}
 	if err := model.Roles.Save(role); err != nil {
-		return nil, err
+		return apis.Error(e, 500, err.Error())
 	}
-	return role, nil
+
+	e.App.GetBroadcaster().SendJSON(core.KeyRBACData, common.LoadRBACData(), "")
+	return apis.Success(e, role)
 }
 
-func (c *Controller) delete(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// Delete 删除角色
+func Delete(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的角色ID")
+		return apis.Error(e, 400, "无效的角色ID")
 	}
+
 	// 检查是否有子角色
 	children, err := model.RoleTreeCache.GetChildren(id)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
 	if len(children) > 0 {
-		return response.BadRequest(ctx, "存在子角色，无法删除")
+		return apis.Error(e, 400, "存在子角色，无法删除")
 	}
-	c.PermCtrl.DeleteRolePermissions(id)
+
+	permission.DeleteRolePermissions(id)
 	if err := model.Roles.DeleteByID(id); err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
+
 	// 刷新缓存
 	model.RoleTreeCache.Refresh()
-	c.Service().Broadcaster().SendJSON(lifecycle.KeyRBACData, common.LoadRBACData(), "")
-	return response.Success(ctx, nil)
+	e.App.GetBroadcaster().SendJSON(core.KeyRBACData, common.LoadRBACData(), "")
+	return apis.Success(e, nil)
 }
 
-func (c *Controller) get(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// Get 获取角色详情
+func Get(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的角色ID")
+		return apis.Error(e, 400, "无效的角色ID")
 	}
 	role, err := model.Roles.GetOne(id)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
 	if role == nil {
-		return response.NotFound(ctx, "角色不存在")
+		return apis.Error(e, 404, "角色不存在")
 	}
-	return response.Success(ctx, role)
+	return apis.Success(e, role)
 }
 
-func (c *Controller) list(ctx *fiber.Ctx) error {
-	params, err := dal.BindQuery(ctx)
+// List 角色列表
+func List(e *core.RequestEvent) error {
+	params, err := dal.BindQueryFromRequest(e.Request)
 	if err != nil {
-		return response.ValidateError(ctx, err.Error())
+		return apis.Error(e, 400, err.Error())
 	}
 	result, err := model.Roles.GetList(params)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	return response.SuccessPage(ctx, result.Items, result.TotalItems, result.Page, result.PerPage)
+	return apis.Paged(e, result.Items, result.TotalItems, result.Page, result.PerPage)
 }
 
-func (c *Controller) getAll(ctx *fiber.Ctx) error {
+// GetAll 获取所有角色
+func GetAll(e *core.RequestEvent) error {
 	roles, err := model.Roles.GetFullList(&dal.ListParams{
 		Filter: "status=1",
 		Sort:   "sort",
 	})
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	return response.Success(ctx, roles)
+	return apis.Success(e, roles)
 }
 
-func (c *Controller) getTree(ctx *fiber.Ctx) error {
+// GetTree 获取角色树
+func GetTree(e *core.RequestEvent) error {
 	tree, err := model.RoleTreeCache.GetTree()
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	return response.Success(ctx, tree)
+	return apis.Success(e, tree)
 }
 
-func (c *Controller) getPermissions(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// GetPermissions 获取角色权限
+func GetPermissions(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的角色ID")
+		return apis.Error(e, 400, "无效的角色ID")
 	}
-	permissions, err := c.PermCtrl.GetByRoleID(id)
+	permissions, err := permission.GetByRoleID(id)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	return response.Success(ctx, permissions)
+	return apis.Success(e, permissions)
 }
 
-// getAllPermissions 获取角色及其所有子角色的权限（聚合）
-func (c *Controller) getAllPermissions(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// GetAllPermissions 获取角色及其所有子角色的权限（聚合）
+func GetAllPermissions(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的角色ID")
+		return apis.Error(e, 400, "无效的角色ID")
 	}
 	// 获取角色及所有后代ID
 	roleIDs, err := model.RoleTreeCache.GetRoleAndDescendantIDs(id)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
 	// 获取所有权限
 	permissions, err := model.Permissions.GetByRoleIDs(roleIDs)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	return response.Success(ctx, permissions)
+	return apis.Success(e, permissions)
 }
 
-func (c *Controller) setPermissions(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// SetPermissions 设置角色权限
+func SetPermissions(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的角色ID")
+		return apis.Error(e, 400, "无效的角色ID")
 	}
 	var req SetPermissionsRequest
-	if err := ctx.BodyParser(&req); err != nil {
-		return response.ValidateError(ctx, err.Error())
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
-	if err := c.doSetPermissions(id, req.PermissionIDs); err != nil {
-		return response.Error(ctx, 500, err.Error())
-	}
-	c.Service().Broadcaster().SendJSON(lifecycle.KeyRBACData, common.LoadRBACData(), "")
-	return response.Success(ctx, nil)
-}
 
-func (c *Controller) doSetPermissions(roleID int64, permissionIDs []int64) error {
-	role, err := model.Roles.GetOne(roleID)
+	role, err := model.Roles.GetOne(id)
 	if err != nil {
-		return err
+		return apis.Error(e, 500, err.Error())
 	}
 	if role == nil {
-		return errors.NotFound("角色")
+		return apis.Error(e, 404, "角色不存在")
 	}
-	return c.PermCtrl.SetRolePermissions(roleID, permissionIDs)
+
+	if err := permission.SetRolePermissions(id, req.PermissionIDs); err != nil {
+		return apis.Error(e, 500, err.Error())
+	}
+
+	e.App.GetBroadcaster().SendJSON(core.KeyRBACData, common.LoadRBACData(), "")
+	return apis.Success(e, nil)
 }
 
-func (c *Controller) refreshCache(ctx *fiber.Ctx) error {
+// RefreshCache 刷新缓存
+func RefreshCache(e *core.RequestEvent) error {
 	if err := model.RoleTreeCache.Refresh(); err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	return response.Success(ctx, nil)
+	return apis.Success(e, nil)
 }
+
+// ================== 导出函数（供其他服务调用） ==================
 
 // GetByID 根据ID获取角色
-func (c *Controller) GetByID(id int64) (*model.Role, error) {
+func GetByID(id int64) (*model.Role, error) {
 	return model.Roles.GetOne(id)
 }
 
-// GetRoleAndDescendantIDs 获取角色及其所有后代ID（供其他服务调用）
-func (c *Controller) GetRoleAndDescendantIDs(roleID int64) ([]int64, error) {
+// GetRoleAndDescendantIDs 获取角色及其所有后代ID
+func GetRoleAndDescendantIDs(roleID int64) ([]int64, error) {
 	return model.RoleTreeCache.GetRoleAndDescendantIDs(roleID)
 }
+
+// ErrNotFound 角色不存在错误
+var ErrNotFound = fmt.Errorf("角色不存在")

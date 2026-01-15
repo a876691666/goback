@@ -403,6 +403,8 @@ type Broadcaster interface {
 	Start() error
 	Stop() error
 	Send(topic string, payload []byte, sender string) error
+	SendTo(topic string, payload []byte, target string) error
+	SendJSON(topic string, data any, target string) error
 	Subscribe(topic string, handler func(payload []byte)) error
 	HandleMessage(topic string, payload []byte)
 }

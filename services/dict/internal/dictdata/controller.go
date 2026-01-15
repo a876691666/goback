@@ -30,7 +30,7 @@ func Create(e *core.RequestEvent) error {
 		dictData.Status = 1
 	}
 	if err := model.DictDatas.Create(dictData); err != nil {
-		return apis.Error(e, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	return apis.Success(e, dictData)
 }
@@ -47,7 +47,7 @@ func Update(e *core.RequestEvent) error {
 	}
 	dictData, err := model.DictDatas.GetOne(id)
 	if err != nil {
-		return apis.Error(e, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	if dictData == nil {
 		return apis.Error(e, 404, "字典数据不存在")
@@ -74,7 +74,7 @@ func Update(e *core.RequestEvent) error {
 		dictData.Remark = req.Remark
 	}
 	if err := model.DictDatas.Save(dictData); err != nil {
-		return apis.Error(e, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	return apis.Success(e, dictData)
 }
@@ -86,7 +86,7 @@ func Delete(e *core.RequestEvent) error {
 		return apis.Error(e, 400, "无效的字典数据ID")
 	}
 	if err := model.DictDatas.DeleteByID(id); err != nil {
-		return apis.Error(e, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	return apis.Success(e, nil)
 }
@@ -99,7 +99,7 @@ func Get(e *core.RequestEvent) error {
 	}
 	dictData, err := model.DictDatas.GetOne(id)
 	if err != nil {
-		return apis.Error(e, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	if dictData == nil {
 		return apis.Error(e, 404, "字典数据不存在")
@@ -118,7 +118,7 @@ func ListByType(e *core.RequestEvent) error {
 		Sort:   "sort",
 	})
 	if err != nil {
-		return apis.Error(e, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	return apis.Success(e, list)
 }
@@ -131,7 +131,7 @@ func GetByCode(e *core.RequestEvent) error {
 	}
 	list, err := GetByTypeCode(code)
 	if err != nil {
-		return apis.Error(e, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	return apis.Success(e, list)
 }

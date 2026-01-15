@@ -1,44 +1,19 @@
 package menu
 
 import (
+	"strconv"
+
+	"github.com/goback/pkg/app/apis"
+	"github.com/goback/pkg/app/core"
 	"github.com/goback/pkg/dal"
-	"github.com/goback/pkg/response"
-	"github.com/goback/pkg/router"
 	"github.com/goback/services/menu/internal/model"
-	"github.com/gofiber/fiber/v2"
 )
 
-// Controller 菜单控制器
-type Controller struct {
-	router.BaseController
-}
-
-// Prefix 返回路由前缀
-func (c *Controller) Prefix() string {
-	return "/menus"
-}
-
-// Routes 返回路由配置
-func (c *Controller) Routes(middlewares map[string]fiber.Handler) []router.Route {
-	return []router.Route{
-		{Method: "POST", Path: "", Handler: c.create, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "PUT", Path: "/:id", Handler: c.update, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "DELETE", Path: "/:id", Handler: c.delete, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "/:id", Handler: c.get, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "", Handler: c.list, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "/tree", Handler: c.getTree, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "/user/tree", Handler: c.getUserMenuTree, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		// 角色菜单关联
-		{Method: "GET", Path: "/role/:roleId", Handler: c.getRoleMenus, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "PUT", Path: "/role/:roleId", Handler: c.setRoleMenus, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "/role/:roleId/tree", Handler: c.getRoleMenuTree, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-	}
-}
-
-func (c *Controller) create(ctx *fiber.Ctx) error {
+// Create 创建菜单
+func Create(e *core.RequestEvent) error {
 	var req CreateRequest
-	if err := ctx.BodyParser(&req); err != nil {
-		return response.ValidateError(ctx, err.Error())
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
 	menu := &model.Menu{
 		ParentID:  req.ParentID,
@@ -63,26 +38,27 @@ func (c *Controller) create(ctx *fiber.Ctx) error {
 		menu.Status = 1
 	}
 	if err := model.Menus.Save(menu); err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
-	return response.Success(ctx, menu)
+	return apis.Success(e, menu)
 }
 
-func (c *Controller) update(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// Update 更新菜单
+func Update(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的菜单ID")
+		return apis.Error(e, 400, "无效的菜单ID")
 	}
 	var req UpdateRequest
-	if err := ctx.BodyParser(&req); err != nil {
-		return response.ValidateError(ctx, err.Error())
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
 	menu, err := model.Menus.GetOne(id)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	if menu == nil {
-		return response.NotFound(ctx, "菜单不存在")
+		return apis.Error(e, 404, "菜单不存在")
 	}
 	if req.Name != "" {
 		menu.Name = req.Name
@@ -114,72 +90,77 @@ func (c *Controller) update(ctx *fiber.Ctx) error {
 		menu.PermCode = req.PermCode
 	}
 	if err := model.Menus.Save(menu); err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
-	return response.Success(ctx, menu)
+	return apis.Success(e, menu)
 }
 
-func (c *Controller) delete(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// Delete 删除菜单
+func Delete(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的菜单ID")
+		return apis.Error(e, 400, "无效的菜单ID")
 	}
 	children, err := model.Menus.GetFullList(&dal.ListParams{
-		Filter: "parent_id=" + ctx.Params("id"),
+		Filter: "parent_id=" + e.Request.PathValue("id"),
 	})
 
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	if len(children) > 0 {
-		return response.BadRequest(ctx, "存在子菜单，无法删除")
+		return apis.Error(e, 400, "存在子菜单，无法删除")
 	}
 	if err := model.Menus.DeleteByID(id); err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
-	return response.Success(ctx, nil)
+	return apis.Success(e, nil)
 }
 
-func (c *Controller) get(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// Get 获取菜单详情
+func Get(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的菜单ID")
+		return apis.Error(e, 400, "无效的菜单ID")
 	}
 	menu, err := model.Menus.GetOne(id)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	if menu == nil {
-		return response.NotFound(ctx, "菜单不存在")
+		return apis.Error(e, 404, "菜单不存在")
 	}
-	return response.Success(ctx, menu)
+	return apis.Success(e, menu)
 }
 
-func (c *Controller) list(ctx *fiber.Ctx) error {
-	params, err := dal.BindQuery(ctx)
+// List 菜单列表
+func List(e *core.RequestEvent) error {
+	params, err := dal.BindQueryFromRequest(e.Request)
 	if err != nil {
-		return response.ValidateError(ctx, err.Error())
+		return apis.Error(e, 400, err.Error())
 	}
 	menus, err := model.Menus.GetFullList(params)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
-	return response.Success(ctx, menus)
+	return apis.Success(e, menus)
 }
 
-func (c *Controller) getTree(ctx *fiber.Ctx) error {
+// GetTree 获取菜单树
+func GetTree(e *core.RequestEvent) error {
 	menus, err := model.Menus.GetFullList(&dal.ListParams{
 		Filter: "status=1",
 		Sort:   "sort,id",
 	})
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
-	return response.Success(ctx, buildMenuTree(menus, 0))
+	return apis.Success(e, buildMenuTree(menus, 0))
 }
 
-func (c *Controller) getUserMenuTree(ctx *fiber.Ctx) error {
-	permCodes := ctx.Locals("permCodes")
+// GetUserMenuTree 获取用户菜单树
+func GetUserMenuTree(e *core.RequestEvent) error {
+	permCodes := e.Get("permCodes")
 	var codes []string
 	if permCodes != nil {
 		if pc, ok := permCodes.([]string); ok {
@@ -191,7 +172,7 @@ func (c *Controller) getUserMenuTree(ctx *fiber.Ctx) error {
 		Sort:   "sort,id",
 	})
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
 	permCodeSet := make(map[string]struct{})
 	for _, code := range codes {
@@ -207,7 +188,7 @@ func (c *Controller) getUserMenuTree(ctx *fiber.Ctx) error {
 			filteredMenus = append(filteredMenus, menu)
 		}
 	}
-	return response.Success(ctx, buildMenuTree(filteredMenus, 0))
+	return apis.Success(e, buildMenuTree(filteredMenus, 0))
 }
 
 func buildMenuTree(menus []model.Menu, parentID int64) []*model.Menu {
@@ -224,34 +205,36 @@ func buildMenuTree(menus []model.Menu, parentID int64) []*model.Menu {
 
 // ================== 角色菜单关联 ==================
 
-func (c *Controller) getRoleMenus(ctx *fiber.Ctx) error {
-	roleID, err := dal.ParseInt64ID(ctx.Params("roleId"))
+// GetRoleMenus 获取角色菜单
+func GetRoleMenus(e *core.RequestEvent) error {
+	roleID, err := strconv.ParseInt(e.Request.PathValue("roleId"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的角色ID")
+		return apis.Error(e, 400, "无效的角色ID")
 	}
 	menus, err := model.Menus.GetByRoleID(roleID)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
-	return response.Success(ctx, menus)
+	return apis.Success(e, menus)
 }
 
-func (c *Controller) setRoleMenus(ctx *fiber.Ctx) error {
-	roleID, err := dal.ParseInt64ID(ctx.Params("roleId"))
+// SetRoleMenus 设置角色菜单
+func SetRoleMenus(e *core.RequestEvent) error {
+	roleID, err := strconv.ParseInt(e.Request.PathValue("roleId"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的角色ID")
+		return apis.Error(e, 400, "无效的角色ID")
 	}
 	var req SetRoleMenusRequest
-	if err := ctx.BodyParser(&req); err != nil {
-		return response.ValidateError(ctx, err.Error())
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
-	if err := c.doSetRoleMenus(roleID, req.MenuIDs); err != nil {
-		return response.Error(ctx, 500, err.Error())
+	if err := doSetRoleMenus(roleID, req.MenuIDs); err != nil {
+		return apis.ErrorFromErr(e, err)
 	}
-	return response.Success(ctx, nil)
+	return apis.Success(e, nil)
 }
 
-func (c *Controller) doSetRoleMenus(roleID int64, menuIDs []int64) error {
+func doSetRoleMenus(roleID int64, menuIDs []int64) error {
 	// 删除原有关联
 	if err := model.RoleMenus.DeleteByRoleID(roleID); err != nil {
 		return err
@@ -270,34 +253,37 @@ func (c *Controller) doSetRoleMenus(roleID int64, menuIDs []int64) error {
 	return model.RoleMenus.CreateBatch(rms)
 }
 
-func (c *Controller) getRoleMenuTree(ctx *fiber.Ctx) error {
-	roleID, err := dal.ParseInt64ID(ctx.Params("roleId"))
+// GetRoleMenuTree 获取角色菜单树
+func GetRoleMenuTree(e *core.RequestEvent) error {
+	roleID, err := strconv.ParseInt(e.Request.PathValue("roleId"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的角色ID")
+		return apis.Error(e, 400, "无效的角色ID")
 	}
 	menus, err := model.Menus.GetByRoleID(roleID)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.ErrorFromErr(e, err)
 	}
-	return response.Success(ctx, buildMenuTree(menus, 0))
+	return apis.Success(e, buildMenuTree(menus, 0))
 }
 
-// GetByRoleID 根据角色ID获取菜单列表（供其他服务调用）
-func (c *Controller) GetByRoleID(roleID int64) ([]model.Menu, error) {
+// ================== 导出函数（供其他服务调用） ==================
+
+// GetByRoleID 根据角色ID获取菜单列表
+func GetByRoleID(roleID int64) ([]model.Menu, error) {
 	return model.Menus.GetByRoleID(roleID)
 }
 
-// GetByRoleIDs 根据多个角色ID获取菜单列表（供其他服务调用）
-func (c *Controller) GetByRoleIDs(roleIDs []int64) ([]model.Menu, error) {
+// GetByRoleIDs 根据多个角色ID获取菜单列表
+func GetByRoleIDs(roleIDs []int64) ([]model.Menu, error) {
 	return model.Menus.GetByRoleIDs(roleIDs)
 }
 
-// SetRoleMenus 设置角色菜单（供其他服务调用）
-func (c *Controller) SetRoleMenus(roleID int64, menuIDs []int64) error {
-	return c.doSetRoleMenus(roleID, menuIDs)
+// DoSetRoleMenus 设置角色菜单（供其他服务调用）
+func DoSetRoleMenus(roleID int64, menuIDs []int64) error {
+	return doSetRoleMenus(roleID, menuIDs)
 }
 
 // DeleteRoleMenus 删除角色菜单（供其他服务调用）
-func (c *Controller) DeleteRoleMenus(roleID int64) error {
+func DeleteRoleMenus(roleID int64) error {
 	return model.RoleMenus.DeleteByRoleID(roleID)
 }

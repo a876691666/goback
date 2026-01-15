@@ -1,59 +1,30 @@
 package permission
 
 import (
+	"strconv"
+
+	"github.com/goback/pkg/app/apis"
+	"github.com/goback/pkg/app/core"
 	"github.com/goback/pkg/dal"
-	"github.com/goback/pkg/errors"
-	"github.com/goback/pkg/lifecycle"
-	"github.com/goback/pkg/response"
-	"github.com/goback/pkg/router"
 	"github.com/goback/services/rbac/internal/common"
 	"github.com/goback/services/rbac/internal/model"
-	"github.com/gofiber/fiber/v2"
 )
 
-// Controller 权限控制器
-type Controller struct {
-	router.BaseController
-}
-
-// Prefix 返回路由前缀
-func (c *Controller) Prefix() string {
-	return "/permissions"
-}
-
-// Routes 返回路由配置
-func (c *Controller) Routes(middlewares map[string]fiber.Handler) []router.Route {
-	return []router.Route{
-		{Method: "POST", Path: "", Handler: c.create, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "PUT", Path: "/:id", Handler: c.update, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "DELETE", Path: "/:id", Handler: c.delete, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "/:id", Handler: c.get, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "", Handler: c.list, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-		{Method: "GET", Path: "/all", Handler: c.getAll, Middlewares: &[]fiber.Handler{middlewares["jwt"]}},
-	}
-}
-
-func (c *Controller) create(ctx *fiber.Ctx) error {
+// Create 创建权限
+func Create(e *core.RequestEvent) error {
 	var req CreateRequest
-	if err := ctx.BodyParser(&req); err != nil {
-		return response.ValidateError(ctx, err.Error())
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
-	perm, err := c.doCreate(&req)
-	if err != nil {
-		return response.Error(ctx, 500, err.Error())
-	}
-	c.Service().Broadcaster().SendJSON(lifecycle.KeyRBACData, common.LoadRBACData(), "")
-	return response.Success(ctx, perm)
-}
 
-func (c *Controller) doCreate(req *CreateRequest) (*model.Permission, error) {
 	exists, err := model.Permissions.ExistsByCode(req.Code)
 	if err != nil {
-		return nil, err
+		return apis.Error(e, 500, err.Error())
 	}
 	if exists {
-		return nil, errors.Duplicate("权限编码")
+		return apis.Error(e, 409, "权限编码已存在")
 	}
+
 	perm := &model.Permission{
 		Name:        req.Name,
 		Code:        req.Code,
@@ -62,36 +33,32 @@ func (c *Controller) doCreate(req *CreateRequest) (*model.Permission, error) {
 		Description: req.Description,
 	}
 	if err := model.Permissions.Create(perm); err != nil {
-		return nil, err
+		return apis.Error(e, 500, err.Error())
 	}
-	return perm, nil
+
+	e.App.GetBroadcaster().SendJSON(core.KeyRBACData, common.LoadRBACData(), "")
+	return apis.Success(e, perm)
 }
 
-func (c *Controller) update(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// Update 更新权限
+func Update(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的权限ID")
+		return apis.Error(e, 400, "无效的权限ID")
 	}
 	var req UpdateRequest
-	if err := ctx.BodyParser(&req); err != nil {
-		return response.ValidateError(ctx, err.Error())
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
-	perm, err := c.doUpdate(id, &req)
-	if err != nil {
-		return response.Error(ctx, 500, err.Error())
-	}
-	c.Service().Broadcaster().SendJSON(lifecycle.KeyRBACData, common.LoadRBACData(), "")
-	return response.Success(ctx, perm)
-}
 
-func (c *Controller) doUpdate(id int64, req *UpdateRequest) (*model.Permission, error) {
 	perm, err := model.Permissions.GetOne(id)
 	if err != nil {
-		return nil, err
+		return apis.Error(e, 500, err.Error())
 	}
 	if perm == nil {
-		return nil, errors.NotFound("权限")
+		return apis.Error(e, 404, "权限不存在")
 	}
+
 	if req.Name != "" {
 		perm.Name = req.Name
 	}
@@ -105,67 +72,75 @@ func (c *Controller) doUpdate(id int64, req *UpdateRequest) (*model.Permission, 
 		perm.Description = req.Description
 	}
 	if err := model.Permissions.Save(perm); err != nil {
-		return nil, err
+		return apis.Error(e, 500, err.Error())
 	}
-	return perm, nil
+
+	e.App.GetBroadcaster().SendJSON(core.KeyRBACData, common.LoadRBACData(), "")
+	return apis.Success(e, perm)
 }
 
-func (c *Controller) delete(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// Delete 删除权限
+func Delete(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的权限ID")
+		return apis.Error(e, 400, "无效的权限ID")
 	}
 	if err := model.Permissions.DeleteByID(id); err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	c.Service().Broadcaster().SendJSON(lifecycle.KeyRBACData, common.LoadRBACData(), "")
-	return response.Success(ctx, nil)
+	e.App.GetBroadcaster().SendJSON(core.KeyRBACData, common.LoadRBACData(), "")
+	return apis.Success(e, nil)
 }
 
-func (c *Controller) get(ctx *fiber.Ctx) error {
-	id, err := dal.ParseInt64ID(ctx.Params("id"))
+// Get 获取权限详情
+func Get(e *core.RequestEvent) error {
+	id, err := strconv.ParseInt(e.Request.PathValue("id"), 10, 64)
 	if err != nil {
-		return response.BadRequest(ctx, "无效的权限ID")
+		return apis.Error(e, 400, "无效的权限ID")
 	}
 	perm, err := model.Permissions.GetOne(id)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
 	if perm == nil {
-		return response.NotFound(ctx, "权限不存在")
+		return apis.Error(e, 404, "权限不存在")
 	}
-	return response.Success(ctx, perm)
+	return apis.Success(e, perm)
 }
 
-func (c *Controller) list(ctx *fiber.Ctx) error {
-	params, err := dal.BindQuery(ctx)
+// List 权限列表
+func List(e *core.RequestEvent) error {
+	params, err := dal.BindQueryFromRequest(e.Request)
 	if err != nil {
-		return response.ValidateError(ctx, err.Error())
+		return apis.Error(e, 400, err.Error())
 	}
 	result, err := model.Permissions.GetList(params)
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	return response.SuccessPage(ctx, result.Items, result.TotalItems, result.Page, result.PerPage)
+	return apis.Paged(e, result.Items, result.TotalItems, result.Page, result.PerPage)
 }
 
-func (c *Controller) getAll(ctx *fiber.Ctx) error {
+// GetAll 获取所有权限
+func GetAll(e *core.RequestEvent) error {
 	permissions, err := model.Permissions.GetFullList(&dal.ListParams{
 		Sort: "id",
 	})
 	if err != nil {
-		return response.Error(ctx, 500, err.Error())
+		return apis.Error(e, 500, err.Error())
 	}
-	return response.Success(ctx, permissions)
+	return apis.Success(e, permissions)
 }
 
+// ================== 导出函数（供其他服务调用） ==================
+
 // GetByRoleID 根据角色ID获取权限列表
-func (c *Controller) GetByRoleID(roleID int64) ([]model.Permission, error) {
+func GetByRoleID(roleID int64) ([]model.Permission, error) {
 	return model.Permissions.GetByRoleID(roleID)
 }
 
 // SetRolePermissions 设置角色权限
-func (c *Controller) SetRolePermissions(roleID int64, permissionIDs []int64) error {
+func SetRolePermissions(roleID int64, permissionIDs []int64) error {
 	if err := model.RolePermissions.DeleteByRoleID(roleID); err != nil {
 		return err
 	}
@@ -179,16 +154,10 @@ func (c *Controller) SetRolePermissions(roleID int64, permissionIDs []int64) err
 			PermissionID: permID,
 		}
 	}
-	if err := model.RolePermissions.CreateBatch(rps); err != nil {
-		return err
-	}
-	return nil
+	return model.RolePermissions.CreateBatch(rps)
 }
 
 // DeleteRolePermissions 删除角色权限
-func (c *Controller) DeleteRolePermissions(roleID int64) error {
-	if err := model.RolePermissions.DeleteByRoleID(roleID); err != nil {
-		return err
-	}
-	return nil
+func DeleteRolePermissions(roleID int64) error {
+	return model.RolePermissions.DeleteByRoleID(roleID)
 }

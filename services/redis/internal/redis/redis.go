@@ -2,13 +2,19 @@ package redis
 
 import (
 	"encoding/json"
+	"errors"
 	"sync"
 	"time"
 
+	"github.com/goback/pkg/app/apis"
+	"github.com/goback/pkg/app/core"
+	"github.com/goback/pkg/app/tools/router"
 	"github.com/goback/pkg/logger"
-	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
 )
+
+// ErrNotFound 未找到错误
+var ErrNotFound = errors.New("key not found")
 
 // item 缓存项
 type item struct {
@@ -82,13 +88,13 @@ func (s *Service) Stop() error {
 }
 
 // RegisterRoutes 注册 HTTP 路由
-func (s *Service) RegisterRoutes(app *fiber.App) {
-	app.Post("/cache/set", s.handleSet)
-	app.Post("/cache/get", s.handleGet)
-	app.Post("/cache/delete", s.handleDelete)
-	app.Post("/cache/exists", s.handleExists)
-	app.Get("/cache/keys", s.handleKeys)
-	app.Post("/cache/clear", s.handleClear)
+func (s *Service) RegisterRoutes(r *router.Router[*core.RequestEvent]) {
+	r.POST("/cache/set", s.handleSet)
+	r.POST("/cache/get", s.handleGet)
+	r.POST("/cache/delete", s.handleDelete)
+	r.POST("/cache/exists", s.handleExists)
+	r.GET("/cache/keys", s.handleKeys)
+	r.POST("/cache/clear", s.handleClear)
 }
 
 // SetRequest 设置请求
@@ -109,10 +115,10 @@ type GetResponse struct {
 	Found bool   `json:"found"`
 }
 
-func (s *Service) handleSet(c *fiber.Ctx) error {
+func (s *Service) handleSet(e *core.RequestEvent) error {
 	var req SetRequest
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
 
 	var exp int64
@@ -124,13 +130,13 @@ func (s *Service) handleSet(c *fiber.Ctx) error {
 	s.items[req.Key] = &item{Value: req.Value, Expiration: exp}
 	s.mu.Unlock()
 
-	return c.JSON(fiber.Map{"ok": true})
+	return e.JSON(200, map[string]any{"ok": true})
 }
 
-func (s *Service) handleGet(c *fiber.Ctx) error {
+func (s *Service) handleGet(e *core.RequestEvent) error {
 	var req GetRequest
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
 
 	s.mu.RLock()
@@ -138,29 +144,29 @@ func (s *Service) handleGet(c *fiber.Ctx) error {
 	s.mu.RUnlock()
 
 	if !ok || it.expired() {
-		return c.JSON(GetResponse{Found: false})
+		return e.JSON(200, GetResponse{Found: false})
 	}
 
-	return c.JSON(GetResponse{Value: it.Value, Found: true})
+	return e.JSON(200, GetResponse{Value: it.Value, Found: true})
 }
 
-func (s *Service) handleDelete(c *fiber.Ctx) error {
+func (s *Service) handleDelete(e *core.RequestEvent) error {
 	var req GetRequest
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
 
 	s.mu.Lock()
 	delete(s.items, req.Key)
 	s.mu.Unlock()
 
-	return c.JSON(fiber.Map{"ok": true})
+	return e.JSON(200, map[string]any{"ok": true})
 }
 
-func (s *Service) handleExists(c *fiber.Ctx) error {
+func (s *Service) handleExists(e *core.RequestEvent) error {
 	var req GetRequest
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	if err := e.BindBody(&req); err != nil {
+		return apis.Error(e, 400, err.Error())
 	}
 
 	s.mu.RLock()
@@ -168,10 +174,10 @@ func (s *Service) handleExists(c *fiber.Ctx) error {
 	s.mu.RUnlock()
 
 	exists := ok && !it.expired()
-	return c.JSON(fiber.Map{"exists": exists})
+	return e.JSON(200, map[string]any{"exists": exists})
 }
 
-func (s *Service) handleKeys(c *fiber.Ctx) error {
+func (s *Service) handleKeys(e *core.RequestEvent) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -183,15 +189,15 @@ func (s *Service) handleKeys(c *fiber.Ctx) error {
 		}
 	}
 
-	return c.JSON(fiber.Map{"keys": keys})
+	return e.JSON(200, map[string]any{"keys": keys})
 }
 
-func (s *Service) handleClear(c *fiber.Ctx) error {
+func (s *Service) handleClear(e *core.RequestEvent) error {
 	s.mu.Lock()
 	s.items = make(map[string]*item)
 	s.mu.Unlock()
 
-	return c.JSON(fiber.Map{"ok": true})
+	return e.JSON(200, map[string]any{"ok": true})
 }
 
 // --- 直接访问方法（供本地调用） ---
@@ -226,7 +232,7 @@ func (s *Service) Get(key string, dest any) error {
 	it, ok := s.items[key]
 	s.mu.RUnlock()
 	if !ok || it.expired() {
-		return fiber.ErrNotFound
+		return ErrNotFound
 	}
 	return json.Unmarshal(it.Value, dest)
 }

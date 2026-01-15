@@ -3,20 +3,20 @@ package auth
 import (
 	"context"
 
-	"github.com/goback/pkg/lifecycle"
+	"github.com/goback/pkg/app/core"
 	"github.com/goback/pkg/logger"
 	"github.com/goback/pkg/ssql"
 	"go.uber.org/zap"
 )
 
 // ========================= RBAC 数据权限函数 =========================
-// 使用 lifecycle.RBACCache 作为统一的数据源
+// 使用 core.RBACCache 作为统一的数据源
 
 // BuildDataScopeSSQL 基于user->role->permission->permissionScope架构，从RBAC缓存生成SSQL对象
 // 使用 RBACCache 作为数据源，自动订阅 RBAC 数据更新
 func BuildDataScopeSSQL(
 	ctx context.Context,
-	rbacCache *lifecycle.RBACCache,
+	rbacCache *core.RBACCache,
 	userID int64,
 	roleID int64,
 	tableName string,
@@ -88,7 +88,7 @@ func matchResource(pattern, resource string) bool {
 }
 
 // GetUserPermissions 获取用户的所有权限（聚合角色树，过滤禁用角色）
-func GetUserPermissions(rbacCache *lifecycle.RBACCache, roleID int64) ([]lifecycle.Permission, error) {
+func GetUserPermissions(rbacCache *core.RBACCache, roleID int64) ([]core.Permission, error) {
 	roleIDs, err := rbacCache.GetRoleAndDescendantIDs(roleID)
 	if err != nil {
 		return nil, err
@@ -96,7 +96,7 @@ func GetUserPermissions(rbacCache *lifecycle.RBACCache, roleID int64) ([]lifecyc
 
 	permissionMap := rbacCache.GetAggregatedPermissions(roleIDs)
 
-	permissions := make([]lifecycle.Permission, 0, len(permissionMap))
+	permissions := make([]core.Permission, 0, len(permissionMap))
 	for _, perm := range permissionMap {
 		permissions = append(permissions, perm)
 	}
