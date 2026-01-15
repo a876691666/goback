@@ -26,7 +26,7 @@ endif
 LDFLAGS=-ldflags "-X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME)"
 
 # 服务列表
-SERVICES=gateway user rbac menu log dict
+SERVICES=gateway user rbac menu log dict config
 
 # 输出目录
 OUTPUT_DIR=bin

@@ -70,3 +70,28 @@ ON DUPLICATE KEY UPDATE updated_at = NOW();
 
 -- 更新用户角色
 UPDATE sys_user SET role_id = 1 WHERE username = 'admin';
+
+-- 创建系统参数配置表
+CREATE TABLE IF NOT EXISTS sys_config (
+    config_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    config_name VARCHAR(100) NOT NULL COMMENT '参数名称',
+    config_key VARCHAR(100) NOT NULL COMMENT '参数键名',
+    config_value TEXT NOT NULL COMMENT '参数键值',
+    config_type VARCHAR(1) DEFAULT 'N' COMMENT '是否内置参数（Y是/N否）',
+    create_by BIGINT DEFAULT 0 COMMENT '创建者',
+    remark VARCHAR(500) COMMENT '备注',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    deleted_at DATETIME NULL COMMENT '删除时间',
+    UNIQUE KEY idx_config_key (config_key),
+    KEY idx_deleted_at (deleted_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统参数配置表';
+
+-- 初始化系统参数配置（示例数据）
+INSERT INTO sys_config (config_name, config_key, config_value, config_type, remark, created_at, updated_at)
+VALUES 
+    ('系统名称', 'sys.name', 'GoBack管理系统', 'Y', '系统显示名称（内置）', NOW(), NOW()),
+    ('系统版本', 'sys.version', '1.0.0', 'Y', '当前系统版本号（内置）', NOW(), NOW()),
+    ('是否开放注册', 'sys.registration.enabled', 'false', 'N', '控制用户注册功能开关', NOW(), NOW()),
+    ('验证码有效期', 'sys.captcha.expire', '300', 'N', '验证码有效期（秒）', NOW(), NOW())
+ON DUPLICATE KEY UPDATE updated_at = NOW();
