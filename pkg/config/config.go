@@ -129,10 +129,21 @@ type LogConfig struct {
 
 // Init 初始化配置
 func Init(configPath string) error {
+	return InitWithService(configPath, "")
+}
+
+// InitWithService 初始化配置并设置服务名（用于自动设置 SQLite 数据库文件名）
+func InitWithService(configPath string, serviceName string) error {
 	var err error
 	once.Do(func() {
 		config = &Config{}
 		err = loadConfig(configPath)
+		if err == nil && serviceName != "" {
+			// 如果是 SQLite 且服务名不为空，自动设置数据库文件名
+			if config.Database.Driver == "sqlite" && config.Database.Database != ":memory:" {
+				config.Database.Database = fmt.Sprintf("data/%s.db", serviceName)
+			}
+		}
 	})
 	return err
 }

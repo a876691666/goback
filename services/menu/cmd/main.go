@@ -24,8 +24,8 @@ const (
 )
 
 func main() {
-	// 加载配置
-	if err := config.Init(""); err != nil {
+	// 加载配置（自动设置 SQLite 数据库文件名为 data/<serviceName>.db）
+	if err := config.InitWithService("", serviceName); err != nil {
 		fmt.Printf("加载配置失败: %v\n", err)
 		os.Exit(1)
 	}

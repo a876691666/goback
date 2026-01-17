@@ -36,5 +36,16 @@
 			"cwd": "${workspaceFolder}",
 			"program": "${workspaceFolder}/services/dict/cmd/main.go"
 		}
+	],
+	"compounds": [
+		{
+			"name": "Compound",
+			"configurations": [
+				"redis",
+				"gateway",
+				"rbac",
+				"dict"
+			]
+		}
 	]
 }
