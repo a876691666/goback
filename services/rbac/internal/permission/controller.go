@@ -36,7 +36,7 @@ func Create(e *core.RequestEvent) error {
 		return apis.Error(e, 500, err.Error())
 	}
 
-	e.App.GetBroadcaster().SendJSON(core.KeyRBACData, common.LoadRBACData(), "")
+	e.App.PublishTopicJSON(core.KeyRBACData, common.LoadRBACData())
 	return apis.Success(e, perm)
 }
 
@@ -75,7 +75,7 @@ func Update(e *core.RequestEvent) error {
 		return apis.Error(e, 500, err.Error())
 	}
 
-	e.App.GetBroadcaster().SendJSON(core.KeyRBACData, common.LoadRBACData(), "")
+	e.App.PublishTopicJSON(core.KeyRBACData, common.LoadRBACData())
 	return apis.Success(e, perm)
 }
 
@@ -88,7 +88,7 @@ func Delete(e *core.RequestEvent) error {
 	if err := model.Permissions.DeleteByID(id); err != nil {
 		return apis.Error(e, 500, err.Error())
 	}
-	e.App.GetBroadcaster().SendJSON(core.KeyRBACData, common.LoadRBACData(), "")
+	e.App.PublishTopicJSON(core.KeyRBACData, common.LoadRBACData())
 	return apis.Success(e, nil)
 }
 

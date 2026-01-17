@@ -221,11 +221,11 @@ type App interface {
 	// ServiceInfo returns the simplified service info.
 	ServiceInfo() *ServiceInfo
 
-	// SetBroadcaster sets the broadcaster.
-	SetBroadcaster(b Broadcaster) *BaseApp
+	// SetPubSub sets the PubSub client.
+	SetPubSub(ps *PubSub) *BaseApp
 
-	// GetBroadcaster returns the broadcaster.
-	GetBroadcaster() Broadcaster
+	// PubSub returns the PubSub client.
+	PubSub() *PubSub
 
 	// ServiceName returns the service name.
 	ServiceName() string
@@ -234,7 +234,7 @@ type App interface {
 	ServiceVersion() string
 
 	// ---------------------------------------------------------------
-	// Broadcaster/PubSub Methods
+	// PubSub Methods
 	// ---------------------------------------------------------------
 
 	// SubscribeLifecycleTopic subscribes to the lifecycle topic.
@@ -243,6 +243,12 @@ type App interface {
 	// SubscribeTopic subscribes to a custom topic.
 	SubscribeTopic(topic string, handler func(payload []byte)) error
 
+	// SubscribeTopicWithMessage subscribes to a custom topic with full message (PubSub only).
+	SubscribeTopicWithMessage(topic string, handler func(msg *PubSubMessage)) error
+
 	// PublishTopic publishes a message to a custom topic.
 	PublishTopic(topic string, payload []byte) error
+
+	// PublishTopicJSON publishes a JSON message to a custom topic.
+	PublishTopicJSON(topic string, data any) error
 }

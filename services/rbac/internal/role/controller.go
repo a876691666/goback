@@ -55,7 +55,7 @@ func Create(e *core.RequestEvent) error {
 
 	// 刷新缓存
 	model.RoleTreeCache.Refresh()
-	e.App.GetBroadcaster().SendJSON(core.KeyRBACData, common.LoadRBACData(), "")
+	e.App.PublishTopicJSON(core.KeyRBACData, common.LoadRBACData())
 	return apis.Success(e, role)
 }
 
@@ -117,7 +117,7 @@ func Update(e *core.RequestEvent) error {
 		return apis.Error(e, 500, err.Error())
 	}
 
-	e.App.GetBroadcaster().SendJSON(core.KeyRBACData, common.LoadRBACData(), "")
+	e.App.PublishTopicJSON(core.KeyRBACData, common.LoadRBACData())
 	return apis.Success(e, role)
 }
 
@@ -144,7 +144,7 @@ func Delete(e *core.RequestEvent) error {
 
 	// 刷新缓存
 	model.RoleTreeCache.Refresh()
-	e.App.GetBroadcaster().SendJSON(core.KeyRBACData, common.LoadRBACData(), "")
+	e.App.PublishTopicJSON(core.KeyRBACData, common.LoadRBACData())
 	return apis.Success(e, nil)
 }
 
@@ -253,7 +253,7 @@ func SetPermissions(e *core.RequestEvent) error {
 		return apis.Error(e, 500, err.Error())
 	}
 
-	e.App.GetBroadcaster().SendJSON(core.KeyRBACData, common.LoadRBACData(), "")
+	e.App.PublishTopicJSON(core.KeyRBACData, common.LoadRBACData())
 	return apis.Success(e, nil)
 }
 

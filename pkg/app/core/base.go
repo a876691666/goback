@@ -396,17 +396,22 @@ type BaseAppConfig struct {
 
 	// ServiceVersion 服务版本
 	ServiceVersion string
-}
 
-// Broadcaster 广播接口
-type Broadcaster interface {
-	Start() error
-	Stop() error
-	Send(topic string, payload []byte, sender string) error
-	SendTo(topic string, payload []byte, target string) error
-	SendJSON(topic string, data any, target string) error
-	Subscribe(topic string, handler func(payload []byte)) error
-	HandleMessage(topic string, payload []byte)
+	// ServiceAddress 服务地址（用于自动创建 Service）
+	ServiceAddress string
+
+	// BasePath 服务基础路径（用于网关路由，如 "users"、"logs"）
+	BasePath string
+
+	// Registry 自定义注册中心（可选，为空时不自动创建）
+	Registry registry.Registry
+
+	// DisablePubSub 禁用 PubSub 客户端（用于 Redis 服务本身）
+	DisablePubSub bool
+
+	// RedisAddr Redis 服务地址（用于 PubSub，如 "localhost:28090"）
+	// 如果为空，则从注册中心发现
+	RedisAddr string
 }
 
 // -------------------------------------------------------------------
@@ -486,10 +491,10 @@ type BaseApp struct {
 	logger              *slog.Logger
 
 	// 服务相关 - 直接使用 go-micro registry
-	registry     registry.Registry
-	regService   *registry.Service
-	serviceInfo  *ServiceInfo // 简化的服务信息（用于内部）
-	broadcaster  Broadcaster
+	registry    registry.Registry
+	regService  *registry.Service
+	serviceInfo *ServiceInfo // 简化的服务信息（用于内部）
+	pubsub      *PubSub      // 基于 Redis 的 PubSub 客户端
 
 	// 缓存相关
 	cacheSpaces map[string]*CacheSpace // module -> CacheSpace
@@ -543,6 +548,47 @@ func NewBaseApp(config BaseAppConfig) *BaseApp {
 	}
 
 	app.initHooks()
+
+	// 自动创建 PubSub 客户端（基于 Redis 服务的中心化广播）
+	// 如果 DisablePubSub 为 true，则不创建（用于 Redis 服务本身）
+	if config.ServiceAddress != "" && !config.DisablePubSub {
+		opts := []PubSubOption{
+			WithPubSubRegistry(config.Registry),
+		}
+		// 如果配置了 Redis 地址，优先使用静态地址
+		if config.RedisAddr != "" {
+			opts = append(opts, WithRedisAddr(config.RedisAddr))
+		}
+		app.pubsub = NewPubSub(
+			app.config.ServiceName,
+			config.ServiceAddress,
+			opts...,
+		)
+	}
+
+	// 如果提供了 Registry，自动设置
+	if config.Registry != nil {
+		app.registry = config.Registry
+	}
+
+	// 如果提供了服务地址，自动创建 Service
+	if config.ServiceAddress != "" {
+		metadata := make(map[string]string)
+		if config.BasePath != "" {
+			metadata["base_path"] = config.BasePath
+		}
+		app.regService = &registry.Service{
+			Name:    app.config.ServiceName,
+			Version: app.config.ServiceVersion,
+			Nodes: []*registry.Node{
+				{
+					Id:       app.config.ServiceName + "-1",
+					Address:  config.ServiceAddress,
+					Metadata: metadata,
+				},
+			},
+		}
+	}
 
 	return app
 }
@@ -838,9 +884,9 @@ func (app *BaseApp) OnServiceStopped() *hook.Hook[*LifecycleEvent] {
 	return app.onServiceStopped
 }
 
-// publishLifecycleEvent 发布生命周期事件（内部使用）
+// publishLifecycleEvent 通过 PubSub 发布生命周期事件
 func (app *BaseApp) publishLifecycleEvent(event string, metadata any) error {
-	if app.broadcaster == nil {
+	if app.pubsub == nil {
 		return nil
 	}
 
@@ -852,12 +898,58 @@ func (app *BaseApp) publishLifecycleEvent(event string, metadata any) error {
 		Metadata:  metadata,
 	}
 
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("marshal lifecycle message: %w", err)
+	return app.pubsub.PublishJSON(lifecycleTopic, msg)
+}
+
+// handlePubSubLifecycleMessage 处理来自 PubSub 的生命周期消息
+func (app *BaseApp) handlePubSubLifecycleMessage(msg *PubSubMessage) {
+	var lifecycleMsg LifecycleMessage
+	if err := json.Unmarshal(msg.Payload, &lifecycleMsg); err != nil {
+		app.Logger().Error("unmarshal lifecycle message failed", "error", err)
+		return
 	}
 
-	return app.broadcaster.Send(lifecycleTopic, data, app.ServiceName())
+	// 过滤自身服务的事件，避免自触发
+	if lifecycleMsg.Service == app.ServiceName() {
+		app.Logger().Debug("ignored own lifecycle event",
+			"service", lifecycleMsg.Service,
+			"event", lifecycleMsg.Event,
+		)
+		return
+	}
+
+	app.Logger().Debug("received lifecycle message via pubsub",
+		"service", lifecycleMsg.Service,
+		"event", lifecycleMsg.Event,
+	)
+
+	// 构造钩子事件
+	event := &LifecycleEvent{
+		App:     app,
+		Message: &lifecycleMsg,
+	}
+
+	// 根据事件类型触发对应的钩子
+	var h *hook.Hook[*LifecycleEvent]
+	switch lifecycleMsg.Event {
+	case "started":
+		h = app.onServiceStarted
+	case "ready":
+		h = app.onServiceReady
+	case "stopping":
+		h = app.onServiceStopping
+	case "stopped":
+		h = app.onServiceStopped
+	default:
+		app.Logger().Warn("unknown lifecycle event", "event", lifecycleMsg.Event)
+		return
+	}
+
+	if err := h.Trigger(event, func(e *LifecycleEvent) error {
+		return e.Next()
+	}); err != nil {
+		app.Logger().Error("lifecycle event hook failed", "error", err, "event", lifecycleMsg.Event)
+	}
 }
 
 // getNodeID 获取节点ID
@@ -871,26 +963,51 @@ func (app *BaseApp) getNodeID() string {
 
 // SubscribeLifecycleTopic 订阅生命周期主题
 func (app *BaseApp) SubscribeLifecycleTopic() error {
-	if app.broadcaster == nil {
+	if app.pubsub != nil {
+		app.pubsub.Subscribe(lifecycleTopic, app.handlePubSubLifecycleMessage)
 		return nil
 	}
-	return app.broadcaster.Subscribe(lifecycleTopic, app.handleLifecycleBroadcast)
+	return fmt.Errorf("pubsub not configured")
 }
 
 // SubscribeTopic 订阅自定义主题
 func (app *BaseApp) SubscribeTopic(topic string, handler func(payload []byte)) error {
-	if app.broadcaster == nil {
-		return fmt.Errorf("broadcaster not configured")
+	if app.pubsub != nil {
+		app.pubsub.Subscribe(topic, func(msg *PubSubMessage) {
+			handler(msg.Payload)
+		})
+		return nil
 	}
-	return app.broadcaster.Subscribe(topic, handler)
+	return fmt.Errorf("pubsub not configured")
+}
+
+// SubscribeTopicWithMessage 订阅自定义主题（完整消息，仅 PubSub 支持）
+func (app *BaseApp) SubscribeTopicWithMessage(topic string, handler func(msg *PubSubMessage)) error {
+	if app.pubsub == nil {
+		return fmt.Errorf("pubsub not configured")
+	}
+	app.pubsub.Subscribe(topic, handler)
+	return nil
 }
 
 // PublishTopic 发布消息到自定义主题
 func (app *BaseApp) PublishTopic(topic string, payload []byte) error {
-	if app.broadcaster == nil {
-		return fmt.Errorf("broadcaster not configured")
+	if app.pubsub != nil {
+		return app.pubsub.Publish(topic, payload)
 	}
-	return app.broadcaster.Send(topic, payload, app.ServiceName())
+	return fmt.Errorf("pubsub not configured")
+}
+
+// PublishTopicJSON 发布 JSON 消息到自定义主题
+func (app *BaseApp) PublishTopicJSON(topic string, data any) error {
+	if app.pubsub != nil {
+		return app.pubsub.PublishJSON(topic, data)
+	}
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	return app.PublishTopic(topic, payload)
 }
 
 // SetServiceInfo sets the simplified service info (deprecated, use SetService).
@@ -904,15 +1021,15 @@ func (app *BaseApp) ServiceInfo() *ServiceInfo {
 	return app.serviceInfo
 }
 
-// SetBroadcaster sets the broadcaster.
-func (app *BaseApp) SetBroadcaster(b Broadcaster) *BaseApp {
-	app.broadcaster = b
+// SetPubSub sets the PubSub client.
+func (app *BaseApp) SetPubSub(ps *PubSub) *BaseApp {
+	app.pubsub = ps
 	return app
 }
 
-// Broadcaster returns the broadcaster.
-func (app *BaseApp) GetBroadcaster() Broadcaster {
-	return app.broadcaster
+// PubSub returns the PubSub client.
+func (app *BaseApp) PubSub() *PubSub {
+	return app.pubsub
 }
 
 // ServiceName returns the service name.
@@ -993,6 +1110,14 @@ func (app *BaseApp) Serve(config ServeConfig) error {
 		return event, nil
 	})
 
+	// 注册 PubSub 接收路由（基于 Redis 服务的中心化广播）
+	if app.pubsub != nil {
+		pbRouter.POST("/_pubsub", func(e *RequestEvent) error {
+			app.pubsub.Handler()(e.Response, e.Request)
+			return nil
+		})
+	}
+
 	// 基础请求上下文
 	baseCtx, cancelBaseCtx := context.WithCancel(context.Background())
 	defer cancelBaseCtx()
@@ -1072,11 +1197,12 @@ func (app *BaseApp) Serve(config ServeConfig) error {
 		}
 	}
 
-	// 启动广播器
-	if app.broadcaster != nil {
-		app.broadcaster.Subscribe(lifecycleTopic, app.handleLifecycleBroadcast)
-		if err := app.broadcaster.Start(); err != nil {
-			app.Logger().Error("start broadcaster failed", "error", err)
+	// 启动 PubSub（基于 Redis 服务的中心化广播）
+	if app.pubsub != nil {
+		// 订阅生命周期主题
+		app.pubsub.Subscribe(lifecycleTopic, app.handlePubSubLifecycleMessage)
+		if err := app.pubsub.Start(); err != nil {
+			app.Logger().Error("start pubsub failed", "error", err)
 		}
 		// 发布启动事件
 		_ = app.publishLifecycleEvent("started", nil)
@@ -1124,54 +1250,12 @@ func (app *BaseApp) Serve(config ServeConfig) error {
 		}
 	}
 
-	// 停止广播器
-	if app.broadcaster != nil {
+	// 停止 PubSub
+	if app.pubsub != nil {
 		// 发布已停止事件
 		_ = app.publishLifecycleEvent("stopped", nil)
-		app.broadcaster.Stop()
+		app.pubsub.Stop()
 	}
 
 	return nil
-}
-
-// handleLifecycleBroadcast handles lifecycle broadcast messages.
-func (app *BaseApp) handleLifecycleBroadcast(payload []byte) {
-	var msg LifecycleMessage
-	if err := json.Unmarshal(payload, &msg); err != nil {
-		app.Logger().Error("unmarshal lifecycle message failed", "error", err)
-		return
-	}
-
-	app.Logger().Debug("received lifecycle message",
-		"service", msg.Service,
-		"event", msg.Event,
-	)
-
-	// 构造钩子事件
-	event := &LifecycleEvent{
-		App:     app,
-		Message: &msg,
-	}
-
-	// 根据事件类型触发对应的硬编码钩子
-	var hook *hook.Hook[*LifecycleEvent]
-	switch msg.Event {
-	case "started":
-		hook = app.onServiceStarted
-	case "ready":
-		hook = app.onServiceReady
-	case "stopping":
-		hook = app.onServiceStopping
-	case "stopped":
-		hook = app.onServiceStopped
-	default:
-		app.Logger().Warn("unknown lifecycle event", "event", msg.Event)
-		return
-	}
-
-	if err := hook.Trigger(event, func(e *LifecycleEvent) error {
-		return e.Next()
-	}); err != nil {
-		app.Logger().Error("lifecycle event hook failed", "error", err, "event", msg.Event)
-	}
 }

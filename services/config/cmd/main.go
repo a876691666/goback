@@ -43,19 +43,16 @@ func main() {
 	// 服务地址
 	addr := fmt.Sprintf("%s:%d", cfg.Server.HTTP.Host, servicePort)
 
-	// 创建 BaseApp
+	// 创建 BaseApp（自动创建 Registry、PubSub、Service）
 	app := core.NewBaseApp(core.BaseAppConfig{
 		ServiceName:    serviceName,
 		ServiceVersion: "v1.0.0",
+		ServiceAddress: addr,
+		BasePath:       basePath,
+		Registry:       pkgRegistry.NewRedisRegistry(),
 		IsDev:          cfg.App.Env == "dev",
+		RedisAddr:      fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
 	})
-
-	// 设置注册中心和服务
-	app.SetRegistry(pkgRegistry.NewRedisRegistry()).
-		SetService(pkgRegistry.NewServiceBuilder(serviceName, "v1.0.0").
-			WithAddress(addr).
-			WithBasePath(basePath).
-			Build())
 
 	// JWT验证器
 	jwtValidator := auth.NewJWTManager(&cfg.JWT)

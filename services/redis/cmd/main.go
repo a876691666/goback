@@ -38,18 +38,18 @@ func main() {
 	// 创建 Redis 服务
 	svc := redis.NewService(serviceName)
 
-	// 创建 BaseApp
+	// 创建 PubSub 服务
+	pubsubSvc := redis.NewPubSubService()
+
+	// 创建 BaseApp（Redis 服务使用内存注册中心，因为它是基础设施服务）
 	app := core.NewBaseApp(core.BaseAppConfig{
 		ServiceName:    serviceName,
 		ServiceVersion: "v1.0.0",
+		ServiceAddress: addr,
+		BasePath:       basePath,
+		Registry:       pkgRegistry.NewMemoryRegistry(), // 使用内存注册中心
+		DisablePubSub:  true,                            // Redis 服务是 PubSub 中心，不需要 PubSub 客户端
 	})
-
-	// 设置注册中心和服务信息
-	app.SetRegistry(pkgRegistry.NewRedisRegistry()).
-		SetService(pkgRegistry.NewServiceBuilder(serviceName, "v1.0.0").
-			WithAddress(addr).
-			WithBasePath(basePath).
-			Build())
 
 	// 启动时初始化缓存服务
 	app.OnBootstrap().BindFunc(func(e *core.BootstrapEvent) error {
@@ -63,6 +63,8 @@ func main() {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		// 注册缓存路由
 		svc.RegisterRoutes(e.Router)
+		// 注册 PubSub 路由
+		pubsubSvc.RegisterRoutes(e.Router)
 
 		return e.Next()
 	})
@@ -79,6 +81,7 @@ func main() {
 	// 服务停止事件
 	app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 		logger.Info("正在关闭服务...")
+		pubsubSvc.Stop()
 		if err := svc.Stop(); err != nil {
 			logger.Error("停止服务失败", zap.Error(err))
 		}

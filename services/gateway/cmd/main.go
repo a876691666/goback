@@ -45,17 +45,14 @@ func main() {
 	// 创建网关
 	gw := gateway.NewGateway(reg, cfg)
 
-	// 创建应用
+	// 创建应用（自动创建 Registry、PubSub、Service）
 	app := core.NewBaseApp(core.BaseAppConfig{
 		ServiceName:    serviceName,
 		ServiceVersion: "v1.0.0",
+		ServiceAddress: addr,
+		Registry:       reg,
+		RedisAddr:      fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
 	})
-
-	// 设置注册中心和服务信息
-	app.SetRegistry(reg).
-		SetService(pkgRegistry.NewServiceBuilder(serviceName, "v1.0.0").
-			WithAddress(addr).
-			Build())
 
 	// 启动时同步路由并监听服务
 	app.OnBootstrap().BindFunc(func(e *core.BootstrapEvent) error {
@@ -81,6 +78,11 @@ func main() {
 		e.Router.PATCH("/api/{path...}", gw.GetHandler())
 
 		return e.Next()
+	})
+
+	// 订阅 RBAC 数据更新（通过 PubSub）
+	app.SubscribeTopic(core.KeyRBACData, func(payload []byte) {
+		logger.Debug("收到 RBAC 数据更新", zap.Int("size", len(payload)))
 	})
 
 	// 服务就绪事件
